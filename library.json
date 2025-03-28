@@ -1,0 +1,28 @@
+{
+  "name": "EmberIot",
+  "version": "0.0.1b",
+  "keywords": "wifi,wi-fi,esp,esp8266,esp32,espressif8266,espressif32,nodemcu,wemos,arduino",
+  "description": "Iot platformio hosted in firebase.",
+  "frameworks": "arduino",
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/davirxavier/EmberIot.git"
+  },
+  "authors":
+  [
+    {
+      "name": "D. Xavier",
+      "email": "fdavirxxavier@gmail.com",
+      "maintainer": true
+    }
+  ],
+  "license": "MIT",
+  "platforms":
+  [
+    "esp32"
+  ],
+  "dependencies": {
+    "bblanchon/ArduinoJson": "7.3.1"
+  }
+}
