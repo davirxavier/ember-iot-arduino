@@ -18,6 +18,9 @@ namespace EmberIotStreamValues
     const uint8_t PROTOCOL_SIZE PROGMEM = strlen(PROTOCOL);
 
     const char *DATA_HEADER PROGMEM = "data:";
+
+    const char *LAST_SEEN_PATH PROGMEM = "last_seen";
+    const uint8_t LAST_SEEN_PATH_SIZE PROGMEM = strlen(LAST_SEEN_PATH);
 }
 
 typedef void (*RTDBStreamCallback)(const char *data);

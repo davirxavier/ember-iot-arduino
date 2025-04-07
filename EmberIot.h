@@ -10,11 +10,17 @@
 #include <WithSecureClient.h>
 #include <EmberIotAuth.h>
 #include <EmberIotStream.h>
+#include <time.h>
 
-class FireProp : WithSecureClient
+#define UPDATE_LAST_SEEN_INTERVAL 60000
+#define EMBER_BUTTON_OFF 0
+#define EMBER_BUTTON_ON 1
+#define EMBER_BUTTON_PUSH 2
+
+class EmberIot : WithSecureClient
 {
 public:
-    FireProp(const char* dbUrl,
+    EmberIot(const char* dbUrl,
              const char* deviceId,
              const char* username = nullptr,
              const char* password = nullptr,
@@ -25,6 +31,7 @@ public:
         path = nullptr;
         auth = nullptr;
         lastUpdatedChannels = 0;
+        lastHeartbeat = -UPDATE_LAST_SEEN_INTERVAL;
 
         if (username != nullptr && password != nullptr && webApiKey != nullptr)
         {
@@ -50,6 +57,7 @@ public:
         stream->start();
         inited = true;
         EmberIotChannels::started = true;
+        configTime(0, 0, "pool.ntp.org");
     }
 
     void loop()
@@ -61,6 +69,12 @@ public:
 
         auth->loop();
         stream->loop();
+
+        if (millis() - lastHeartbeat > UPDATE_LAST_SEEN_INTERVAL)
+        {
+            writeLastSeen();
+            lastHeartbeat = millis();
+        }
 
         if (millis() - lastUpdatedChannels < 500)
         {
@@ -89,7 +103,8 @@ public:
 
                 char buf[5];
                 sprintf(buf, "CH%d", i);
-                doc[buf] = updateDataByChannel[i];
+                doc[buf]["d"] = updateDataByChannel[i];
+                doc[buf]["w"] = EMBER_DEVICE_TYPE;
             }
 
             unsigned int bodySize = measureJson(doc)+2;
@@ -172,6 +187,55 @@ private:
                                             data);
     }
 
+    bool writeLastSeen()
+    {
+        size_t bufSize = strlen(EmberIotStreamValues::PROTOCOL) +
+            strlen(dbUrl) +
+            strlen(EmberIotStreamValues::AUTH_PARAM) +
+            strlen(stream->getPath()) +
+            (auth != nullptr ? auth->getTokenSize() : 0) + 8;
+
+        size_t pathSize = strlen(stream->getPath());
+        char finalPath[pathSize+EmberIotStreamValues::LAST_SEEN_PATH_SIZE+1];
+        finalPath[0] = 0;
+
+        char *lastSlash = strrchr(stream->getPath(), '/');
+        if (lastSlash != nullptr)
+        {
+            size_t index = lastSlash - stream->getPath();
+            strcpy(finalPath, stream->getPath());
+            finalPath[index] = 0;
+        }
+        else
+        {
+            strcpy(finalPath, stream->getPath());
+        }
+
+        char buf[bufSize];
+        sprintf(buf, "%s%s%s.json%s%s&print=silent",
+                EmberIotStreamValues::PROTOCOL,
+                dbUrl,
+                finalPath,
+                EmberIotStreamValues::AUTH_PARAM,
+                auth != nullptr ? auth->getToken() : "");
+
+        time_t now;
+        tm timeinfo;
+        getLocalTime(&timeinfo);
+        time(&now);
+
+        char bodyBuf[snprintf(NULL, 0, "%ld", now)+16];
+        sprintf(bodyBuf, "{\"%s\":%ld}", EmberIotStreamValues::LAST_SEEN_PATH, now);
+
+        HTTP_LOGF("Setting last_seen in path: %s, body:\n%s\n", buf, bodyBuf);
+
+        return HTTP_UTIL::doJsonHttpRequest(client,
+                                            buf,
+                                            dbUrl,
+                                            HTTP_UTIL::METHOD_PATCH,
+                                            bodyBuf);
+    }
+
     bool inited;
     const char* dbUrl;
     char* path;
@@ -179,6 +243,7 @@ private:
     EmberIotAuth* auth;
 
     unsigned long lastUpdatedChannels;
+    unsigned long lastHeartbeat;
     bool hasUpdateByChannel[EMBER_CHANNEL_COUNT]{};
     char updateDataByChannel[EMBER_CHANNEL_COUNT][EMBER_MAXIMUM_STRING_SIZE+1]{};
 };

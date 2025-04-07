@@ -7,6 +7,7 @@
 
 #ifndef EMBER_CHANNEL_COUNT
 #error "Max channel count not defined, please define the channel count before importing this file like so: #define EMBER_CHANNEL_COUNT 5"
+#error "It doesn't need to be the exact channel number, but it should be equal or more than the number of channels you will use."
 #endif
 
 #ifndef EMBER_MAXIMUM_STRING_SIZE
@@ -21,6 +22,8 @@
     void emberIotChannelUpdateCH ## channel (const EmberIotProp &prop)
 
 #include <EmberIotHttp.h>
+
+const char *EMBER_DEVICE_TYPE PROGMEM = "board";
 
 class EmberIotProp
 {
@@ -64,6 +67,7 @@ namespace EmberIotChannels
 {
     bool started = false;
     EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
+    bool firstCallbackDone = false;
 
     inline void streamCallback(const char* data)
     {
@@ -92,15 +96,30 @@ namespace EmberIotChannels
             if (strcmp("/", path) == 0)
             {
                 sprintf(name, "CH%d", i);
-                EmberIotProp prop(doc["data"][name].as<const char*>());
-                cb(prop);
-            }
-            else if (strcmp(name, path) == 0)
-            {
-                EmberIotProp prop(doc["data"].as<const char*>());
+
+                JsonDocument dataDoc = doc["data"];
+
+                if (!dataDoc[name].is<JsonVariant>())
+                {
+                    continue;
+                }
+
+                if (dataDoc[name]["w"].is<JsonVariant>() && firstCallbackDone)
+                {
+                    const char *who = dataDoc[name]["w"].as<const char*>();
+                    if (strcmp(who, EMBER_DEVICE_TYPE) == 0)
+                    {
+                        HTTP_LOGN("Event was self-made, ignoring.");
+                        continue;
+                    }
+                }
+
+                EmberIotProp prop(dataDoc[name]["d"].as<const char*>());
                 cb(prop);
             }
         }
+
+        firstCallbackDone = true;
     }
 
     inline void addCallback(uint8_t channel, EmberIotUpdateCallback cb)
