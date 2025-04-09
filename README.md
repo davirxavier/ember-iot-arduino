@@ -1,8 +1,8 @@
 # 🔥 Ember IoT – Host Your Own IoT Cloud
 
-Ember IoT is a simple proof of concept for a self-hostable IoT cloud designed to work with Arduino-based devices and an Android mobile app. It enables microcontrollers to connect to the cloud, securely sync data, and interact with a mobile interface all while using the Firebase Authentication and Firebase Realtime Database services.
+Ember IoT is a simple proof of concept for a Firebase-hosted IoT cloud designed to work with Arduino-based devices and an Android mobile app. It enables microcontrollers to connect to the cloud, securely sync data, and interact with a mobile interface all while using the Firebase Authentication and Firebase Realtime Database services.
 
-This project includes an Android application that features device management and a customizable UI for interacting with connected devices. Alternatively, the Ember IoT library can also be used for microcontroller-to-microcontroller communication, allowing devices to communicate directly without the need for the Android app.
+**This project's aim is to enable you to create a simple IoT infrastructure without all the hassle of setting up a server in your home network or in a cloud provider.**
 
 ---
 
@@ -15,12 +15,14 @@ Ember IoT allows you to:
 - Securely authenticate users and devices with Firebase Authentication
 - Store and sync your microcontroller state between devices
 
+This project includes an Android application that features device management and a customizable UI for interacting with connected devices. Alternatively, the Ember IoT library can also be used for microcontroller-to-microcontroller communication, allowing devices to communicate directly without the need for the Android app.
+
 ---
 
 ## ❓ Why Would I Use Firebase for IoT?
 
 ### Short Answer:
-Firebase’s free Spark plan from Google seems to be suitable for handling small-scale IoT projects — potentially supporting dozens of devices with real-time data sync and built-in user authentication.
+Firebase’s free Spark plan from Google seems to be suitable for handling small-scale IoT projects — potentially supporting dozens of devices with real-time data sync and built-in user authentication. This enables you to create a simple IoT infrastructure without all the hassle of setting up a server in your home network or in a cloud provider.
 
 ### Detailed Answer:
 
