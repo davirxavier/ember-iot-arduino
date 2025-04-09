@@ -20,6 +20,7 @@ Ember IoT is a simple proof of concept for a Firebase-hosted IoT cloud designed 
       * [`ember.loop()`](#emberloop)
       * [`ember.channelWrite(channel, value)`](#emberchannelwritechannel-value)
   * [How it Works - What even is a Data Channel?](#how-it-works---what-even-is-a-data-channel)
+* [📝 TODO](#-todo)
 <!-- TOC -->
 
 ---
@@ -202,3 +203,8 @@ The Firebase Realtime Database REST API supports real-time updates by using the 
 The library processes this incoming data through data channels, effectively routing each stream into its own variable for clean and organized access in your code.
 
 To send updates, the library uses the same REST API to perform HTTP requests—making it easy for external systems, such as microcontrollers, to write new values to these data channels.
+
+# 📝 TODO
+
+- [ ] Compatibility with ESP8266
+- [ ] Notification service
