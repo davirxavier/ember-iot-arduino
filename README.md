@@ -57,7 +57,7 @@ Firebase, on the other hand, offers:
 - Simple and secure authentication with support for email and password
 - A relatively generous free tier under the Spark plan:
     - 100 simultaneous database connections (each microcontroller and Android device will use 1 connection slot)
-    - 1 GB storage (each device will use less than 1kb of storage)
+    - 1 GB storage (each device will use 1-10kb of storage, approximately)
     - 50,000 reads/day, 20,000 writes/day
 
 This could make Firebase a compelling backend for IoT hobbyists, educators, and developers looking for an easy-to-use platform with minimal upfront cost. You have the flexibility to decide exactly how much you need and tailor your setup accordingly, optimizing it as your project grows. This ensures you’re not bound by the limitations of third-party platforms, giving you full control over your project’s scalability and requirements.
