@@ -4,6 +4,24 @@ Ember IoT is a simple proof of concept for a Firebase-hosted IoT cloud designed 
 
 **This project's aim is to enable you to create a simple IoT infrastructure without all the hassle of setting up a server in your home network or in a cloud provider.**
 
+<!-- TOC -->
+* [🔥 Ember IoT – Host Your Own IoT Cloud](#-ember-iot--host-your-own-iot-cloud)
+  * [🔍 What Is Ember IoT?](#-what-is-ember-iot)
+  * [❓ Why Would I Use Firebase for IoT?](#-why-would-i-use-firebase-for-iot)
+    * [Short Answer:](#short-answer)
+    * [Detailed Answer:](#detailed-answer)
+* [🔥 Firebase Setup](#-firebase-setup)
+* [📱 App Setup](#-app-setup)
+* [Arduino Setup](#arduino-setup)
+    * [Simple Data Channel Listen and Write Example:](#simple-data-channel-listen-and-write-example)
+      * [`EmberIot ember(...)`](#emberiot-ember)
+      * [`EMBER_CHANNEL_CB(channel)`](#ember_channel_cbchannel)
+      * [`ember.init()`](#emberinit)
+      * [`ember.loop()`](#emberloop)
+      * [`ember.channelWrite(channel, value)`](#emberchannelwritechannel-value)
+  * [How it Works - What even is a Data Channel?](#how-it-works---what-even-is-a-data-channel)
+<!-- TOC -->
+
 ---
 
 ## 🔍 What Is Ember IoT?
