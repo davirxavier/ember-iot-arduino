@@ -99,6 +99,7 @@ Include the library in your Arduino project. You can download this repository's 
 #define USER "tutorial@gmail.com"
 #define PASSWORD "password"
 #define WEB_API_KEY "yourwebapikey"
+#define BOARD_ID 0
 
 // Device ID that was created in the Android app. 
 // Can be any string if using the library for microcontroller-to-microcontroller communication.
@@ -108,6 +109,7 @@ Include the library in your Arduino project. You can download this repository's 
 // Initialize the EmberIot instance
 EmberIot ember(RTDB_URL,
                   DEVICE_ID,
+                  BOARD_ID,
                   USER,
                   PASSWORD,
                   WEB_API_KEY);
@@ -170,6 +172,7 @@ Below is a brief overview of the key functions used in the example code:
 This is the constructor that initializes the `EmberIot` instance with the provided parameters:
 - `RTDB_URL`: The URL of the Firebase Realtime Database.
 - `DEVICE_ID`: A unique identifier for the device (it can be any string, or the ID created in the Android app).
+- `BOARD_ID`: A number identifying this microcontroller specifically. Used for microcontroller to microcontroller communication, each board should have a unique ID so the library can separate which channel updates are from other boards. Can be any number for normal Android app usage.
 - `USER`: The email address used for Firebase Authentication.
 - `PASSWORD`: The password for the Firebase Authentication.
 - `WEB_API_KEY`: The Firebase Web API key required to authenticate the connection.
