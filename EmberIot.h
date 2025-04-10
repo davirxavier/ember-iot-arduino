@@ -22,6 +22,7 @@ class EmberIot : WithSecureClient
 public:
     EmberIot(const char* dbUrl,
              const char* deviceId,
+             const unsigned int &boardId = 0,
              const char* username = nullptr,
              const char* password = nullptr,
              const char* webApiKey = nullptr) : dbUrl(dbUrl)
@@ -32,6 +33,7 @@ public:
         auth = nullptr;
         lastUpdatedChannels = 0;
         lastHeartbeat = -UPDATE_LAST_SEEN_INTERVAL;
+        snprintf(EmberIotChannels::boardId, sizeof(EmberIotChannels::boardId), "%d", boardId);
 
         if (username != nullptr && password != nullptr && webApiKey != nullptr)
         {
@@ -104,7 +106,7 @@ public:
                 char buf[5];
                 sprintf(buf, "CH%d", i);
                 doc[buf]["d"] = updateDataByChannel[i];
-                doc[buf]["w"] = EMBER_DEVICE_TYPE;
+                doc[buf]["w"] = EmberIotChannels::boardId;
             }
 
             unsigned int bodySize = measureJson(doc)+2;

@@ -23,8 +23,6 @@
 
 #include <EmberIotHttp.h>
 
-const char *EMBER_DEVICE_TYPE PROGMEM = "board";
-
 class EmberIotProp
 {
 public:
@@ -68,6 +66,7 @@ namespace EmberIotChannels
     bool started = false;
     EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
     bool firstCallbackDone = false;
+    char boardId[8] = "0";
 
     inline void streamCallback(const char* data)
     {
@@ -107,7 +106,7 @@ namespace EmberIotChannels
                 if (dataDoc[name]["w"].is<JsonVariant>() && firstCallbackDone)
                 {
                     const char *who = dataDoc[name]["w"].as<const char*>();
-                    if (strcmp(who, EMBER_DEVICE_TYPE) == 0)
+                    if (strcmp(who, boardId) == 0)
                     {
                         HTTP_LOGN("Event was self-made, ignoring.");
                         continue;

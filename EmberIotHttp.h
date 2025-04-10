@@ -8,8 +8,13 @@
 #include <ArduinoJson.h>
 #include <WiFiClientSecure.h>
 
+#ifdef EMBER_ENABLE_LOGGING
 #define HTTP_LOGN(str) Serial.println(str)
 #define HTTP_LOGF(str, p...) Serial.printf(str, p)
+#else
+#define HTTP_LOGN(str)
+#define HTTP_LOGF(str, p...)
+#endif
 
 namespace HTTP_UTIL
 {
