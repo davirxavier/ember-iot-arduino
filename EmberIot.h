@@ -12,7 +12,7 @@
 #include <EmberIotStream.h>
 #include <time.h>
 
-#define UPDATE_LAST_SEEN_INTERVAL 60000
+#define UPDATE_LAST_SEEN_INTERVAL 120000
 #define EMBER_BUTTON_OFF 0
 #define EMBER_BUTTON_ON 1
 #define EMBER_BUTTON_PUSH 2
@@ -20,9 +20,19 @@
 class EmberIot : WithSecureClient
 {
 public:
+    /**
+     * @param dbUrl Realtime database URL, without protocol and slashes at the end. Example value: my-rtdb.firebaseio.com
+     * @param deviceId Device id string. Should be the device id copied from the android app (by long-pressing on a device)
+     * or any string if you want to use board-to-board communication only.
+     * @param boardId Per device unique identifier for this specific board. You need to use separate numbers for board-to-board
+     * communication, so the library can identify who emitted what data. Use 0 or any positive number if only using with the android app.
+     * @param username Firebase authentication username. The username for the user you created in Firebase Authentication (not the username used to sign in to firebase).
+     * @param password Firebase authentication password. The password for the user you created in Firebase Authentication (not the username used to sign in to firebase).
+     * @param webApiKey Api key for your Firebase project, found under project settings.
+     */
     EmberIot(const char* dbUrl,
              const char* deviceId,
-             const unsigned int &boardId = 0,
+             const unsigned int& boardId = 0,
              const char* username = nullptr,
              const char* password = nullptr,
              const char* webApiKey = nullptr) : dbUrl(dbUrl)
@@ -34,6 +44,7 @@ public:
         lastUpdatedChannels = 0;
         lastHeartbeat = -UPDATE_LAST_SEEN_INTERVAL;
         snprintf(EmberIotChannels::boardId, sizeof(EmberIotChannels::boardId), "%d", boardId);
+        enableHeartbeat = true;
 
         if (username != nullptr && password != nullptr && webApiKey != nullptr)
         {
@@ -54,6 +65,9 @@ public:
         }
     }
 
+    /**
+     * Starts communication with Firebase, should be called after the wifi is connected succesfully.
+     */
     void init()
     {
         stream->start();
@@ -62,6 +76,9 @@ public:
         configTime(0, 0, "pool.ntp.org");
     }
 
+    /**
+     * Manages the connection with Firebase, should be called every loop.
+     */
     void loop()
     {
         if (!inited)
@@ -72,7 +89,7 @@ public:
         auth->loop();
         stream->loop();
 
-        if (millis() - lastHeartbeat > UPDATE_LAST_SEEN_INTERVAL)
+        if (enableHeartbeat && millis() - lastHeartbeat > UPDATE_LAST_SEEN_INTERVAL)
         {
             writeLastSeen();
             lastHeartbeat = millis();
@@ -109,14 +126,14 @@ public:
                 doc[buf]["w"] = EmberIotChannels::boardId;
             }
 
-            unsigned int bodySize = measureJson(doc)+2;
+            unsigned int bodySize = measureJson(doc) + 2;
             char body[bodySize];
             serializeJson(doc, body, bodySize);
 
             bool result = write(body);
             if (result)
             {
-                for (bool & i : hasUpdateByChannel)
+                for (bool& i : hasUpdateByChannel)
                 {
                     i = false;
                 }
@@ -130,6 +147,11 @@ public:
         lastUpdatedChannels = millis();
     }
 
+    /**
+     * Writes a string to a data channel.
+     * @param channel Channel number.
+     * @param value Value to be written.
+     */
     void channelWrite(uint8_t channel, const char* value)
     {
         hasUpdateByChannel[channel] = true;
@@ -137,23 +159,45 @@ public:
         updateDataByChannel[channel][EMBER_MAXIMUM_STRING_SIZE] = 0;
     }
 
+    /**
+     * Writes an int to a data channel.
+     * @param channel Channel number.
+     * @param value Value to be written.
+     */
     void channelWrite(uint8_t channel, int value)
     {
         hasUpdateByChannel[channel] = true;
         sprintf(updateDataByChannel[channel], "%d", value);
     }
 
+    /**
+     * Writes a double to a data channel.
+     * @param channel Channel number.
+     * @param value Value to be written.
+     */
     void channelWrite(uint8_t channel, double value)
     {
         hasUpdateByChannel[channel] = true;
         sprintf(updateDataByChannel[channel], "%f", value);
     }
 
+    /**
+     * Writes a long to a data channel.
+     * @param channel Channel number.
+     * @param value Value to be written.
+     */
     void channelWrite(uint8_t channel, long long value)
     {
         hasUpdateByChannel[channel] = true;
         sprintf(updateDataByChannel[channel], "%lld", value);
     }
+
+    /**
+     * Enable or disable the heartbeat packet. If disabled the device will always appear as offline in the android app.
+     * You can disable this to reduce transfers in the databse, if you want (you should probably disable this for board-to-board
+     * communication, as it does nothing in that case).
+     */
+    bool enableHeartbeat;
 
 private:
     bool write(const char* data)
@@ -165,11 +209,11 @@ private:
             (auth != nullptr ? auth->getTokenSize() : 0) + 8;
 
         size_t pathSize = strlen(stream->getPath());
-        char finalPath[pathSize+1];
+        char finalPath[pathSize + 1];
         if (FirePropUtil::endsWith(stream->getPath(), ".json"))
         {
             strcpy(finalPath, stream->getPath());
-            finalPath[pathSize-5] = 0;
+            finalPath[pathSize - 5] = 0;
         }
 
         char buf[bufSize];
@@ -198,10 +242,10 @@ private:
             (auth != nullptr ? auth->getTokenSize() : 0) + 8;
 
         size_t pathSize = strlen(stream->getPath());
-        char finalPath[pathSize+EmberIotStreamValues::LAST_SEEN_PATH_SIZE+1];
+        char finalPath[pathSize + EmberIotStreamValues::LAST_SEEN_PATH_SIZE + 1];
         finalPath[0] = 0;
 
-        char *lastSlash = strrchr(stream->getPath(), '/');
+        char* lastSlash = strrchr(stream->getPath(), '/');
         if (lastSlash != nullptr)
         {
             size_t index = lastSlash - stream->getPath();
@@ -226,7 +270,7 @@ private:
         getLocalTime(&timeinfo);
         time(&now);
 
-        char bodyBuf[snprintf(NULL, 0, "%ld", now)+16];
+        char bodyBuf[snprintf(NULL, 0, "%ld", now) + 16];
         sprintf(bodyBuf, "{\"%s\":%ld}", EmberIotStreamValues::LAST_SEEN_PATH, now);
 
         HTTP_LOGF("Setting last_seen in path: %s, body:\n%s\n", buf, bodyBuf);
@@ -247,7 +291,7 @@ private:
     unsigned long lastUpdatedChannels;
     unsigned long lastHeartbeat;
     bool hasUpdateByChannel[EMBER_CHANNEL_COUNT]{};
-    char updateDataByChannel[EMBER_CHANNEL_COUNT][EMBER_MAXIMUM_STRING_SIZE+1]{};
+    char updateDataByChannel[EMBER_CHANNEL_COUNT][EMBER_MAXIMUM_STRING_SIZE + 1]{};
 };
 
 #endif //FIREPROP_H
