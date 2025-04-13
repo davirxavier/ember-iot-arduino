@@ -39,6 +39,7 @@ public:
     {
         stream = nullptr;
         inited = false;
+        isPaused = false;
         path = nullptr;
         auth = nullptr;
         lastUpdatedChannels = 0;
@@ -73,7 +74,7 @@ public:
         stream->start();
         inited = true;
         EmberIotChannels::started = true;
-        configTime(0, 0, "pool.ntp.org");
+        isPaused = false;
     }
 
     /**
@@ -91,7 +92,9 @@ public:
 
         if (enableHeartbeat && millis() - lastHeartbeat > UPDATE_LAST_SEEN_INTERVAL)
         {
+            pause();
             writeLastSeen();
+            resume();
             lastHeartbeat = millis();
         }
 
@@ -130,7 +133,9 @@ public:
             char body[bodySize];
             serializeJson(doc, body, bodySize);
 
+            pause();
             bool result = write(body);
+            resume();
             if (result)
             {
                 for (bool& i : hasUpdateByChannel)
@@ -192,6 +197,20 @@ public:
         sprintf(updateDataByChannel[channel], "%lld", value);
     }
 
+    void pause()
+    {
+        isPaused = true;
+        stream->stop();
+        delay(100);
+    }
+
+    void resume()
+    {
+        delay(100);
+        isPaused = false;
+        stream->start();
+    }
+
     /**
      * Enable or disable the heartbeat packet. If disabled the device will always appear as offline in the android app.
      * You can disable this to reduce transfers in the databse, if you want (you should probably disable this for board-to-board
@@ -202,9 +221,9 @@ public:
 private:
     bool write(const char* data)
     {
-        size_t bufSize = strlen(EmberIotStreamValues::PROTOCOL) +
+        size_t bufSize = EmberIotStreamValues::PROTOCOL_SIZE +
             strlen(dbUrl) +
-            strlen(EmberIotStreamValues::AUTH_PARAM) +
+            EmberIotStreamValues::AUTH_PARAM_SIZE +
             strlen(stream->getPath()) +
             (auth != nullptr ? auth->getTokenSize() : 0) + 8;
 
@@ -217,7 +236,7 @@ private:
         }
 
         char buf[bufSize];
-        sprintf(buf, "%s%s%s.json%s%s&print=silent",
+        sprintf_P(buf, PSTR("%S%s%s.json%S%s&print=silent"),
                 EmberIotStreamValues::PROTOCOL,
                 dbUrl,
                 finalPath,
@@ -229,15 +248,15 @@ private:
         return HTTP_UTIL::doJsonHttpRequest(client,
                                             buf,
                                             dbUrl,
-                                            HTTP_UTIL::METHOD_PATCH,
+                                            FPSTR(HTTP_UTIL::METHOD_PATCH),
                                             data);
     }
 
     bool writeLastSeen()
     {
-        size_t bufSize = strlen(EmberIotStreamValues::PROTOCOL) +
+        size_t bufSize = EmberIotStreamValues::PROTOCOL_SIZE +
             strlen(dbUrl) +
-            strlen(EmberIotStreamValues::AUTH_PARAM) +
+            EmberIotStreamValues::AUTH_PARAM_SIZE +
             strlen(stream->getPath()) +
             (auth != nullptr ? auth->getTokenSize() : 0) + 8;
 
@@ -258,7 +277,7 @@ private:
         }
 
         char buf[bufSize];
-        sprintf(buf, "%s%s%s.json%s%s&print=silent",
+        sprintf_P(buf, PSTR("%S%s%s.json%S%s&print=silent"),
                 EmberIotStreamValues::PROTOCOL,
                 dbUrl,
                 finalPath,
@@ -270,15 +289,20 @@ private:
         getLocalTime(&timeinfo);
         time(&now);
 
+#ifdef ESP32
         char bodyBuf[snprintf(NULL, 0, "%ld", now) + 16];
         sprintf(bodyBuf, "{\"%s\":%ld}", EmberIotStreamValues::LAST_SEEN_PATH, now);
+#elif ESP8266
+        char bodyBuf[snprintf(NULL, 0, "%lld", now) + 16];
+        sprintf_P(bodyBuf, PSTR("{\"%S\":%lld}"), EmberIotStreamValues::LAST_SEEN_PATH, now);
+#endif
 
         HTTP_LOGF("Setting last_seen in path: %s, body:\n%s\n", buf, bodyBuf);
 
         return HTTP_UTIL::doJsonHttpRequest(client,
                                             buf,
                                             dbUrl,
-                                            HTTP_UTIL::METHOD_PATCH,
+                                            FPSTR(HTTP_UTIL::METHOD_PATCH),
                                             bodyBuf);
     }
 
@@ -287,6 +311,7 @@ private:
     char* path;
     EmberIotStream* stream;
     EmberIotAuth* auth;
+    bool isPaused;
 
     unsigned long lastUpdatedChannels;
     unsigned long lastHeartbeat;

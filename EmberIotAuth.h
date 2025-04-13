@@ -11,13 +11,13 @@
 
 namespace EmberIotAuthValues
 {
-    const char *AUTH_URL PROGMEM = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=";
-    const char *AUTH_HOST PROGMEM = "identitytoolkit.googleapis.com";
-    const uint16_t AUTH_URL_SIZE PROGMEM = strlen(AUTH_URL);
+    const char AUTH_URL[] PROGMEM = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=";
+    const char AUTH_HOST[] PROGMEM = "identitytoolkit.googleapis.com";
+    const uint16_t AUTH_URL_SIZE = strlen_P(AUTH_URL);
 
-    const char *REFRESH_URL PROGMEM = "https://securetoken.googleapis.com/v1/token?key=";
-    const char *REFRESH_HOST PROGMEM = "securetoken.googleapis.com";
-    const uint16_t REFRESH_URL_SIZE PROGMEM = strlen(REFRESH_URL);
+    const char REFRESH_URL[] PROGMEM = "https://securetoken.googleapis.com/v1/token?key=";
+    const char REFRESH_HOST[] PROGMEM = "securetoken.googleapis.com";
+    const uint16_t REFRESH_URL_SIZE = strlen_P(REFRESH_URL);
 }
 
 class EmberIotAuth : public WithSecureClient
@@ -30,6 +30,7 @@ public:
         this->tokenExpiry = 0;
         this->tokenSize = 0;
         this->lastTry = 0;
+        currentToken = new char[1024]{};
     }
 
     bool isExpired() const
@@ -101,7 +102,7 @@ private:
         serializeJson(doc, requestBody, requestBodySize+1);
 
         char url[EmberIotAuthValues::AUTH_URL_SIZE + this->apiKeySize + 1];
-        strcpy(url, EmberIotAuthValues::AUTH_URL);
+        strcpy_P(url, EmberIotAuthValues::AUTH_URL);
         strcat(url, this->apiKey);
 
         JsonDocument responseDoc;
@@ -111,10 +112,13 @@ private:
         filter["expiresIn"] = true;
         filter["localId"] = true;
 
+        char host[strlen_P(EmberIotAuthValues::AUTH_HOST)+1];
+        strcpy_P(host, EmberIotAuthValues::AUTH_HOST);
+
         bool result = HTTP_UTIL::doJsonHttpRequest(this->client,
             url,
-            EmberIotAuthValues::AUTH_HOST,
-            HTTP_UTIL::METHOD_POST,
+            host,
+            FPSTR(HTTP_UTIL::METHOD_POST),
             requestBody,
             &filter,
             &responseDoc);
@@ -154,7 +158,7 @@ private:
         serializeJson(doc, requestBody, requestBodySize+1);
 
         char url[EmberIotAuthValues::REFRESH_URL_SIZE + this->apiKeySize + 1];
-        strcpy(url, EmberIotAuthValues::REFRESH_URL);
+        strcpy_P(url, EmberIotAuthValues::REFRESH_URL);
         strcat(url, this->apiKey);
 
         JsonDocument responseDoc;
@@ -162,10 +166,13 @@ private:
         filter["id_token"] = true;
         filter["expires_in"] = true;
 
+        char host[strlen_P(EmberIotAuthValues::REFRESH_HOST)+1];
+        strcpy_P(host, EmberIotAuthValues::REFRESH_HOST);
+
         bool result = HTTP_UTIL::doJsonHttpRequest(this->client,
             url,
-            EmberIotAuthValues::REFRESH_HOST,
-            HTTP_UTIL::METHOD_POST,
+            host,
+            FPSTR(HTTP_UTIL::METHOD_POST),
             requestBody,
             &filter,
             &responseDoc);
@@ -190,7 +197,7 @@ private:
 
     char userUid[36]{};
     bool refreshTokenSet;
-    char currentToken[1024]{};
+    char *currentToken;
     uint16_t tokenSize;
     char refreshToken[256]{};
     unsigned long tokenExpiry;

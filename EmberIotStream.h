@@ -11,16 +11,16 @@
 
 namespace EmberIotStreamValues
 {
-    const char *AUTH_PARAM PROGMEM = "?auth=";
-    const uint8_t AUTH_PARAM_SIZE PROGMEM = strlen(AUTH_PARAM);
+    const char AUTH_PARAM[] PROGMEM = "?auth=";
+    const uint8_t AUTH_PARAM_SIZE = strlen_P(AUTH_PARAM);
 
-    const char *PROTOCOL PROGMEM = "https://";
-    const uint8_t PROTOCOL_SIZE PROGMEM = strlen(PROTOCOL);
+    const char PROTOCOL[] PROGMEM = "https://";
+    const uint8_t PROTOCOL_SIZE = strlen_P(PROTOCOL);
 
-    const char *DATA_HEADER PROGMEM = "data:";
+    const char DATA_HEADER[] PROGMEM = "data:";
 
-    const char *LAST_SEEN_PATH PROGMEM = "last_seen";
-    const uint8_t LAST_SEEN_PATH_SIZE PROGMEM = strlen(LAST_SEEN_PATH);
+    const char LAST_SEEN_PATH[] PROGMEM = "last_seen";
+    const uint8_t LAST_SEEN_PATH_SIZE = strlen_P(LAST_SEEN_PATH);
 }
 
 typedef void (*RTDBStreamCallback)(const char *data);
@@ -150,14 +150,14 @@ private:
 
         if (hasAuth())
         {
-            sprintf(url, "%s%s%s%s%s", EmberIotStreamValues::PROTOCOL, this->host, this->path, EmberIotStreamValues::AUTH_PARAM, auth->getToken());
+            sprintf_P(url, PSTR("%S%s%s%S%s"), EmberIotStreamValues::PROTOCOL, this->host, this->path, EmberIotStreamValues::AUTH_PARAM, auth->getToken());
         }
         else
         {
-            sprintf(url, "%s%s%s", EmberIotStreamValues::PROTOCOL, this->host, this->path);
+            sprintf_P(url, PSTR("%S%s%s"), EmberIotStreamValues::PROTOCOL, this->host, this->path);
         }
 
-        return HTTP_UTIL::connectToTextStream(client, url, this->host, HTTP_UTIL::METHOD_GET) == 200;
+        return HTTP_UTIL::connectToTextStream(client, url, this->host, FPSTR(HTTP_UTIL::METHOD_GET)) == 200;
     }
 
     void handleUpdate()
@@ -168,12 +168,14 @@ private:
         }
 
         unsigned int currentDataChar = 0;
-        unsigned int dataHeaderLength = strlen(EmberIotStreamValues::DATA_HEADER);
+        unsigned int dataHeaderLength = strlen_P(EmberIotStreamValues::DATA_HEADER);
+        char dataHeader[dataHeaderLength+1];
+        strcpy_P(dataHeader, EmberIotStreamValues::DATA_HEADER);
 
         while (client.available()) {
             char c = tolower(client.read());
 
-            if (c == EmberIotStreamValues::DATA_HEADER[currentDataChar])
+            if (c == dataHeader[currentDataChar])
             {
                 currentDataChar++;
             }
