@@ -9,6 +9,7 @@
 #include <EmberIotUtil.h>
 #include <WithSecureClient.h>
 #include <EmberIotAuth.h>
+#include <EmberIotShared.h>
 #include <EmberIotStream.h>
 #include <time.h>
 
@@ -87,15 +88,54 @@ public:
             return;
         }
 
-        auth->loop();
+        if (auth != nullptr && !auth->ready())
+        {
+            auth->loop();
+            return;
+        }
+
+        if (auth != nullptr && auth->isExpired())
+        {
+#ifdef ESP32
+            auth->loop();
+#elif ESP8266
+            pause();
+            auth->loop();
+            resume();
+#endif
+            return;
+        }
+        else if (auth != nullptr)
+        {
+            auth->loop();
+        }
+
+        if (!stream->isConnected())
+        {
+            EmberIotChannels::reconnectedFlag = true;
+        }
+
         stream->loop();
 
         if (enableHeartbeat && millis() - lastHeartbeat > UPDATE_LAST_SEEN_INTERVAL)
         {
+#ifdef ESP32
+            bool written = writeLastSeen();
+#elif ESP8266
             pause();
-            writeLastSeen();
+            bool written = writeLastSeen();
             resume();
-            lastHeartbeat = millis();
+#endif
+
+            if (written)
+            {
+                lastHeartbeat = millis();
+            }
+            else
+            {
+                HTTP_LOGN("Write heartbeat failed, trying again in one second.");
+                lastHeartbeat = millis() - UPDATE_LAST_SEEN_INTERVAL + 2000;
+            }
         }
 
         if (millis() - lastUpdatedChannels < 500)
@@ -133,9 +173,13 @@ public:
             char body[bodySize];
             serializeJson(doc, body, bodySize);
 
+#ifdef ESP32
+            bool result = write(body);
+#elif ESP8266
             pause();
             bool result = write(body);
             resume();
+#endif
             if (result)
             {
                 for (bool& i : hasUpdateByChannel)
@@ -221,6 +265,11 @@ public:
 private:
     bool write(const char* data)
     {
+        if (auth != nullptr && auth->getUserUid() == nullptr)
+        {
+            return false;
+        }
+
         size_t bufSize = EmberIotStreamValues::PROTOCOL_SIZE +
             strlen(dbUrl) +
             EmberIotStreamValues::AUTH_PARAM_SIZE +
@@ -254,6 +303,11 @@ private:
 
     bool writeLastSeen()
     {
+        if (auth != nullptr && auth->getUserUid() == nullptr)
+        {
+            return false;
+        }
+
         size_t bufSize = EmberIotStreamValues::PROTOCOL_SIZE +
             strlen(dbUrl) +
             EmberIotStreamValues::AUTH_PARAM_SIZE +

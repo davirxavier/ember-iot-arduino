@@ -22,11 +22,12 @@
     void emberIotChannelUpdateCH ## channel (const EmberIotProp &prop)
 
 #include <EmberIotHttp.h>
+#include <EmberIotUtil.h>
 
 class EmberIotProp
 {
 public:
-    explicit EmberIotProp(const char* data) : data(data)
+    explicit EmberIotProp(const char* data, const bool hasChanged) : data(data), hasChanged(hasChanged)
     {
     }
 
@@ -55,6 +56,10 @@ public:
         return this->data;
     }
 
+    /**
+     * True if the value itself has changed from the last emitted value.
+     */
+    const bool hasChanged;
 private:
     const char* data;
 };
@@ -63,10 +68,12 @@ typedef void (*EmberIotUpdateCallback)(const EmberIotProp& p);
 
 namespace EmberIotChannels
 {
-    bool started = false;
-    EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
-    bool firstCallbackDone = false;
-    char boardId[8] = "0";
+    inline bool started = false;
+    inline EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
+    inline bool firstCallbackDone = false;
+    inline char boardId[8] = "0";
+    inline bool reconnectedFlag = false;
+    inline uint32_t lastValueHashes[EMBER_CHANNEL_COUNT]{};
 
     inline void streamCallback(const char* data)
     {
@@ -113,7 +120,24 @@ namespace EmberIotChannels
                     }
                 }
 
-                EmberIotProp prop(dataDoc[name]["d"].as<const char*>());
+                const char *dataStr = dataDoc[name]["d"].as<const char*>();
+
+                uint32_t currentHash = FirePropUtil::fnv1aHash(dataStr);
+                bool hasChanged = currentHash != lastValueHashes[i];
+
+                if (reconnectedFlag)
+                {
+                    HTTP_LOGF("Checking hashes for channel %d\n", i);
+                    reconnectedFlag = false;
+                    if (!hasChanged)
+                    {
+                        HTTP_LOGN("Data hashes are equal, ignoring event.");
+                        return;
+                    }
+                }
+
+                lastValueHashes[i] = FirePropUtil::fnv1aHash(dataStr);
+                EmberIotProp prop(dataStr, hasChanged);
                 cb(prop);
             }
         }

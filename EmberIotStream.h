@@ -32,7 +32,7 @@ public:
     EmberIotStream(EmberIotAuth *auth, const char *host, const char *path) : host(host), auth(auth)
     {
         isStarted = false;
-        firstStart = true;
+        isUidReplaced = false;
         updateCallback = nullptr;
         lastConnection = 0;
         lastUpdate = 0;
@@ -71,29 +71,6 @@ public:
         {
             return;
         }
-
-        if (firstStart)
-        {
-            firstStart = false;
-
-            size_t occurrences = FirePropUtil::countOccurrences(this->path, "$uid");
-            if (occurrences > 0)
-            {
-                char *uid = auth->getUserUid();
-                size_t uidLen = strlen(uid);
-
-                size_t bufSize = strlen(this->path) - (occurrences * 4) + (occurrences * uidLen) + 1;
-                char buf[bufSize];
-                strcpy(buf, this->path);
-
-                delete[] this->path;
-                this->path = new char[bufSize]{};
-                strcpy(this->path, buf);
-
-                FirePropUtil::replaceSubstring(this->path, "$uid", auth->getUserUid());
-            }
-        }
-
         isStarted = true;
         lastConnection = millis()-5000;
     }
@@ -111,8 +88,32 @@ public:
 
     void loop()
     {
-        if (!isStarted)
+        if (!isStarted || (auth != nullptr && auth->getUserUid() == nullptr))
         {
+            return;
+        }
+
+        if (!isUidReplaced)
+        {
+            size_t occurrences = FirePropUtil::countOccurrences(this->path, "$uid");
+
+            if (occurrences > 0)
+            {
+                char *uid = auth->getUserUid();
+                size_t uidLen = strlen(uid);
+
+                size_t bufSize = strlen(this->path) - (occurrences * 4) + (occurrences * uidLen) + 1;
+                char buf[bufSize];
+                strcpy(buf, this->path);
+
+                delete[] this->path;
+                this->path = new char[bufSize]{};
+                strcpy(this->path, buf);
+
+                FirePropUtil::replaceSubstring(this->path, "$uid", auth->getUserUid());
+            }
+
+            isUidReplaced = true;
             return;
         }
 
@@ -139,6 +140,11 @@ public:
 
             lastConnection = millis();
         }
+    }
+
+    bool isConnected()
+    {
+        return client.connected();
     }
 
     unsigned long updateInterval;
@@ -198,7 +204,7 @@ private:
     }
 
     bool isStarted;
-    bool firstStart;
+    bool isUidReplaced;
     const char *host;
     char *path;
     EmberIotAuth *auth;
