@@ -30,7 +30,7 @@ namespace HTTP_UTIL
     inline bool doJsonHttpRequest(WiFiClientSecure& client,
                                   const char* url,
                                   const char* hostname,
-                                  const char* method,
+                                  const __FlashStringHelper *method,
                                   const char* requestBody,
                                   JsonDocument* filter = nullptr,
                                   JsonDocument* responseDoc = nullptr,
@@ -42,9 +42,12 @@ namespace HTTP_UTIL
             return false;
         }
 
-        unsigned int bufferSize = max(256U, strlen(url) + strlen(method) + strlen(HTTP_UTIL::HTTP_VER) + 1);
+        unsigned int bufferSize = max(256U, strlen(url) + strlen_P((PGM_P) method) + strlen_P(HTTP_UTIL::HTTP_VER) + 1);
         char headerBuffer[bufferSize];
-        snprintf(headerBuffer, bufferSize, "%s%s%s", method, url, HTTP_VER);
+
+        strncpy_P(headerBuffer, (PGM_P) method, bufferSize);
+        strcat(headerBuffer, url);
+        strcat_P(headerBuffer, HTTP_VER);
         client.println(headerBuffer);
 
         snprintf(headerBuffer, bufferSize, "Host: %s", hostname);
@@ -109,7 +112,7 @@ namespace HTTP_UTIL
     inline int connectToTextStream(WiFiClientSecure& client,
                                    const char* url,
                                    const char* hostname,
-                                   const char* method,
+                                   const __FlashStringHelper *method,
                                    uint8_t maxRedirection = 10,
                                    uint8_t currentRedirection = 0)
     {
@@ -121,11 +124,13 @@ namespace HTTP_UTIL
         }
         HTTP_LOGN("Connected!");
 
-        unsigned int bufferSize = max(256U, strlen(url) + strlen(method) + strlen(HTTP_UTIL::HTTP_VER) + 1);
+        unsigned int bufferSize = max(256U, strlen(url) + strlen_P((PGM_P) method) + strlen_P(HTTP_UTIL::HTTP_VER) + 1);
         char headerBuffer[bufferSize];
         headerBuffer[0] = 0;
 
-        snprintf(headerBuffer, bufferSize, "%s%s%s", method, url, HTTP_VER);
+        strncpy_P(headerBuffer, (PGM_P) method, bufferSize);
+        strcat(headerBuffer, url);
+        strcat_P(headerBuffer, HTTP_VER);
         client.println(headerBuffer);
 
         snprintf(headerBuffer, bufferSize, "Host: %s", hostname);
@@ -136,7 +141,10 @@ namespace HTTP_UTIL
         client.println();
 
         HTTP_LOGN("Looking for status and location header.");
-        unsigned int locationSize = strlen(LOCATION_HEADER);
+        unsigned int locationSize = strlen_P(LOCATION_HEADER);
+        char locationHeader[locationSize+1];
+        strcpy_P(locationHeader, LOCATION_HEADER);
+
         unsigned int currentLocationChar = 0;
         int status = -1;
 
@@ -172,7 +180,7 @@ namespace HTTP_UTIL
 
                 const char c = tolower(client.read());
 
-                if (currentLocationChar < locationSize && c == LOCATION_HEADER[currentLocationChar])
+                if (currentLocationChar < locationSize && c == locationHeader[currentLocationChar])
                 {
                     currentLocationChar++;
                 }

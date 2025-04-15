@@ -66,6 +66,21 @@ namespace FirePropUtil {
         for (size_t i = 0; i < length; i++) // No braces
             arr[i] = nullptr;
     }
+
+    inline uint32_t fnv1aHash(const char* str) {
+        uint32_t hash = 2166136261UL;  // FNV offset basis
+
+        if (str == nullptr)
+        {
+            return hash;
+        }
+
+        while (*str) {
+            hash ^= (uint8_t)(*str++);
+            hash *= 16777619UL;  // FNV prime
+        }
+        return hash;
+    }
 }
 
 #endif //FIREBASE_UTIL_H

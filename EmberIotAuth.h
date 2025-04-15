@@ -11,13 +11,9 @@
 
 namespace EmberIotAuthValues
 {
-    const char *AUTH_URL PROGMEM = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=";
-    const char *AUTH_HOST PROGMEM = "identitytoolkit.googleapis.com";
-    const uint16_t AUTH_URL_SIZE PROGMEM = strlen(AUTH_URL);
-
-    const char *REFRESH_URL PROGMEM = "https://securetoken.googleapis.com/v1/token?key=";
-    const char *REFRESH_HOST PROGMEM = "securetoken.googleapis.com";
-    const uint16_t REFRESH_URL_SIZE PROGMEM = strlen(REFRESH_URL);
+    const char AUTH_URL[] PROGMEM = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=";
+    const char AUTH_HOST[] PROGMEM = "identitytoolkit.googleapis.com";
+    const uint16_t AUTH_URL_SIZE = strlen_P(AUTH_URL);
 }
 
 class EmberIotAuth : public WithSecureClient
@@ -26,10 +22,11 @@ public:
     EmberIotAuth(const char* username, const char* password, const char* apiKey): username(username), password(password), apiKey(apiKey)
     {
         this->apiKeySize = strlen(apiKey);
-        this->refreshTokenSet = false;
+        this->userUidSet = false;
         this->tokenExpiry = 0;
         this->tokenSize = 0;
         this->lastTry = 0;
+        currentToken = new char[1024]{};
     }
 
     bool isExpired() const
@@ -39,34 +36,11 @@ public:
 
     char *getUserUid()
     {
-        if (!refreshTokenSet)
-        {
-            getToken();
-        }
-
         return userUid;
     }
 
-    char *getToken()
+    char *getToken() const
     {
-        if (!refreshTokenSet || strlen(refreshToken) == 0)
-        {
-            HTTP_LOGN("Token not set, authenticating.");
-            if (authenticateFirebase())
-            {
-                return currentToken;
-            }
-        }
-
-        if (isExpired())
-        {
-            HTTP_LOGN("Token expired.");
-            if (refreshFirebaseToken() || authenticateFirebase())
-            {
-                return currentToken;
-            }
-        }
-
         return this->currentToken;
     }
 
@@ -77,15 +51,16 @@ public:
 
     void loop()
     {
-        if ((isExpired() || !this->refreshTokenSet) && millis() - lastTry > 5000)
+        if ((isExpired() || !this->userUidSet) && millis() - lastTry > 5000)
         {
-            if (!refreshFirebaseToken())
-            {
-                authenticateFirebase();
-            }
-
+            authenticateFirebase();
             lastTry = millis();
         }
+    }
+
+    bool ready()
+    {
+        return userUidSet;
     }
 
 private:
@@ -101,7 +76,7 @@ private:
         serializeJson(doc, requestBody, requestBodySize+1);
 
         char url[EmberIotAuthValues::AUTH_URL_SIZE + this->apiKeySize + 1];
-        strcpy(url, EmberIotAuthValues::AUTH_URL);
+        strcpy_P(url, EmberIotAuthValues::AUTH_URL);
         strcat(url, this->apiKey);
 
         JsonDocument responseDoc;
@@ -111,10 +86,13 @@ private:
         filter["expiresIn"] = true;
         filter["localId"] = true;
 
+        char host[strlen_P(EmberIotAuthValues::AUTH_HOST)+1];
+        strcpy_P(host, EmberIotAuthValues::AUTH_HOST);
+
         bool result = HTTP_UTIL::doJsonHttpRequest(this->client,
             url,
-            EmberIotAuthValues::AUTH_HOST,
-            HTTP_UTIL::METHOD_POST,
+            host,
+            FPSTR(HTTP_UTIL::METHOD_POST),
             requestBody,
             &filter,
             &responseDoc);
@@ -128,58 +106,12 @@ private:
         strcpy(currentToken, responseDoc["idToken"]);
         this->tokenSize = strlen(currentToken);
 
-        strcpy(refreshToken, responseDoc["refreshToken"]);
-        tokenExpiry = millis() + ((responseDoc["expiresIn"].as<unsigned long>() - 300) * 1000);
-        refreshTokenSet = true;
-
         strcpy(userUid, responseDoc["localId"]);
+        userUidSet = true;
+
+        tokenExpiry = millis() + (responseDoc["expiresIn"].as<unsigned long long>() * 1000UL);
         HTTP_LOGF("User uid: %s\n", userUid);
-        HTTP_LOGF("Token expires in %u millis.\n", tokenExpiry);
-        return true;
-    }
-
-    bool refreshFirebaseToken()
-    {
-        if (this->refreshToken == nullptr || strlen(this->refreshToken) == 0)
-        {
-            return false;
-        }
-
-        JsonDocument doc;
-        doc["grant_type"] = "refresh_token";
-        doc["refresh_token"] = this->refreshToken;
-
-        unsigned int requestBodySize = measureJson(doc);
-        char requestBody[requestBodySize + 1];
-        serializeJson(doc, requestBody, requestBodySize+1);
-
-        char url[EmberIotAuthValues::REFRESH_URL_SIZE + this->apiKeySize + 1];
-        strcpy(url, EmberIotAuthValues::REFRESH_URL);
-        strcat(url, this->apiKey);
-
-        JsonDocument responseDoc;
-        JsonDocument filter;
-        filter["id_token"] = true;
-        filter["expires_in"] = true;
-
-        bool result = HTTP_UTIL::doJsonHttpRequest(this->client,
-            url,
-            EmberIotAuthValues::REFRESH_HOST,
-            HTTP_UTIL::METHOD_POST,
-            requestBody,
-            &filter,
-            &responseDoc);
-
-        if (!result)
-        {
-            HTTP_LOGN("Firebase refresh token request has invalid response.");
-            return false;
-        }
-
-        strcpy(this->currentToken, responseDoc["id_token"]);
-        this->tokenSize = strlen(currentToken);
-
-        tokenExpiry = millis() + (responseDoc["expires_in"].as<unsigned long>() * 1000);
+        HTTP_LOGF("Token expires in %lu millis.\n", tokenExpiry);
         return true;
     }
 
@@ -189,10 +121,9 @@ private:
     uint16_t apiKeySize;
 
     char userUid[36]{};
-    bool refreshTokenSet;
-    char currentToken[1024]{};
+    bool userUidSet;
+    char *currentToken;
     uint16_t tokenSize;
-    char refreshToken[256]{};
     unsigned long tokenExpiry;
     unsigned long lastTry;
 };
