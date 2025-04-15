@@ -76,6 +76,10 @@ public:
         inited = true;
         EmberIotChannels::started = true;
         isPaused = false;
+
+#ifdef ESP32
+        configTime(0, 0, "pool.ntp.org");
+#endif
     }
 
     /**

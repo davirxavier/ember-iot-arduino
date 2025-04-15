@@ -68,12 +68,12 @@ typedef void (*EmberIotUpdateCallback)(const EmberIotProp& p);
 
 namespace EmberIotChannels
 {
-    inline bool started = false;
-    inline EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
-    inline bool firstCallbackDone = false;
-    inline char boardId[8] = "0";
-    inline bool reconnectedFlag = false;
-    inline uint32_t lastValueHashes[EMBER_CHANNEL_COUNT]{};
+    bool started = false;
+    EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
+    bool firstCallbackDone = false;
+    char boardId[8] = "0";
+    bool reconnectedFlag = false;
+    uint32_t lastValueHashes[EMBER_CHANNEL_COUNT]{};
 
     inline void streamCallback(const char* data)
     {
@@ -128,11 +128,10 @@ namespace EmberIotChannels
                 if (reconnectedFlag)
                 {
                     HTTP_LOGF("Checking hashes for channel %d\n", i);
-                    reconnectedFlag = false;
                     if (!hasChanged)
                     {
                         HTTP_LOGN("Data hashes are equal, ignoring event.");
-                        return;
+                        continue;
                     }
                 }
 
@@ -143,6 +142,7 @@ namespace EmberIotChannels
         }
 
         firstCallbackDone = true;
+        reconnectedFlag = false;
     }
 
     inline void addCallback(uint8_t channel, EmberIotUpdateCallback cb)

@@ -18,6 +18,9 @@ namespace EmberIotStreamValues
     const uint8_t PROTOCOL_SIZE = strlen_P(PROTOCOL);
 
     const char DATA_HEADER[] PROGMEM = "data:";
+    const char EVENT_HEADER[] PROGMEM = "event:";
+    const char CANCEL_EVENT[] PROGMEM = "cancel";
+    const char AUTH_REVOKED_EVENT[] PROGMEM = "auth_revoked";
 
     const char LAST_SEEN_PATH[] PROGMEM = "last_seen";
     const uint8_t LAST_SEEN_PATH_SIZE = strlen_P(LAST_SEEN_PATH);
@@ -173,6 +176,11 @@ private:
             return;
         }
 
+        unsigned int currentEventChar = 0;
+        unsigned int eventHeaderLength = strlen_P(EmberIotStreamValues::EVENT_HEADER);
+        char eventHeader[eventHeaderLength+1];
+        strcpy_P(eventHeader, EmberIotStreamValues::EVENT_HEADER);
+
         unsigned int currentDataChar = 0;
         unsigned int dataHeaderLength = strlen_P(EmberIotStreamValues::DATA_HEADER);
         char dataHeader[dataHeaderLength+1];
@@ -180,6 +188,34 @@ private:
 
         while (client.available()) {
             char c = tolower(client.read());
+
+            if (c == eventHeader[currentEventChar])
+            {
+                currentEventChar++;
+            }
+            else
+            {
+                currentEventChar = 0;
+            }
+
+            if (currentEventChar >= eventHeaderLength)
+            {
+                if (client.peek() == ' ')
+                {
+                    client.read();
+                }
+
+                char eventBuf[65];
+                eventBuf[client.readBytesUntil('\n', eventBuf, 64)] = 0;
+                HTTP_LOGF("Event header value: %s\n", eventBuf);
+
+                if (strcmp_P(eventBuf, EmberIotStreamValues::CANCEL_EVENT) == 0 || strcmp_P(eventBuf, EmberIotStreamValues::AUTH_REVOKED_EVENT) == 0)
+                {
+                    HTTP_LOGN("Cancel or auth revoked event received, disconnecting stream.");
+                    client.stop();
+                    return;
+                }
+            }
 
             if (c == dataHeader[currentDataChar])
             {
