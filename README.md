@@ -209,6 +209,6 @@ To send updates, the library uses the same REST API to perform HTTP requests—m
 
 # 📝 TODO
 
-- [ ] Compatibility with ESP8266
+- [X] Compatibility with ESP8266
 - [ ] Add option for LAN communication, for when there's no network connection
 - [ ] Notification service
