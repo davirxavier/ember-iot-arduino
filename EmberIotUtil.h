@@ -5,6 +5,12 @@
 #ifndef FIREBASE_UTIL_H
 #define FIREBASE_UTIL_H
 
+#ifdef ESP32
+#include <WiFi.h>
+#elif ESP8266
+#include <ESP8266WiFi.h>
+#endif
+
 namespace FirePropUtil {
     inline size_t countOccurrences(const char *str, const char *sub) {
         int count = 0;

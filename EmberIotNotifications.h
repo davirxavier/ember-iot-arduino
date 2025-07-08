@@ -208,7 +208,7 @@ private:
 
         if (LittleFS.exists(littleFsTempTokenExpiration))
         {
-            File expFile = LittleFS.open(littleFsTempTokenExpiration);
+            File expFile = LittleFS.open(littleFsTempTokenExpiration, "r");
             tokenExpiration = expFile.readString().toInt();
             expFile.close();
         }
@@ -253,7 +253,7 @@ private:
 
         doc.shrinkToFit();
 
-        File authFile = LittleFS.open(this->littleFsTempTokenLocation);
+        File authFile = LittleFS.open(this->littleFsTempTokenLocation, "r");
 
         int responseStatus = 0;
 
@@ -314,6 +314,8 @@ private:
     bool renewToken()
     {
         size_t privateKeySize = strlen_P((PGM_P) gcmAccountPrivateKey)+1;
+
+#ifdef ESP32
         char *privateKeyBuf = (char*) malloc(privateKeySize);
         if (privateKeyBuf == nullptr)
         {
@@ -322,6 +324,8 @@ private:
         }
 
         strcpy_P(privateKeyBuf, (PGM_P) gcmAccountPrivateKey);
+#endif
+
 
         size_t emailSize = strlen_P((PGM_P) gcmAccountEmail);
         char email[emailSize+1];
@@ -332,13 +336,20 @@ private:
         getLocalTime(&timeinfo);
         time(&now);
 
+#ifdef ESP32
         const char bodyPattern[] = R"({"scope":"https://www.googleapis.com/auth/firebase.messaging","aud":"https://oauth2.googleapis.com/token","iss":"%s","exp":"%ld","iat":"%ld"})";
+#elif ESP8266
+        const char bodyPattern[] = R"({"scope":"https://www.googleapis.com/auth/firebase.messaging","aud":"https://oauth2.googleapis.com/token","iss":"%s","exp":"%lld","iat":"%lld"})";
+#endif
+
         size_t finalBodySize = strlen(bodyPattern) + emailSize + (20*2) + 1;
         char *bodyBuf = (char*) malloc(finalBodySize);
         if (bodyBuf == nullptr)
         {
             HTTP_LOGN("Out of heap for JWT payload, trying again later.");
+#ifdef ESP32
             free(privateKeyBuf);
+#endif
             return false;
         }
 
@@ -357,7 +368,9 @@ private:
         if (buf == nullptr)
         {
             HTTP_LOGN("Out of heap for JWT buffer, trying again later.");
+#ifdef ESP32
             free(privateKeyBuf);
+#endif
             free(bodyBuf);
             return false;
         }
@@ -377,8 +390,12 @@ private:
         written = written - removedChars;
         buf[bodyIndex+written] = 0;
 
+#ifdef ESP32
         signRS256(buf+EmberIotNotificationValues::GRANT_STR_SIZE, privateKeyBuf, buf + bodyIndex + written + 1, bufSize - bodyIndex - written);
         free(privateKeyBuf);
+#elif ESP8266
+        signRS256(buf+EmberIotNotificationValues::GRANT_STR_SIZE, (PGM_P) gcmAccountPrivateKey, buf + bodyIndex + written + 1, bufSize - bodyIndex - written);
+#endif
 
         buf[bodyIndex+written] = '.';
         removedChars = base64urlencode(buf);
