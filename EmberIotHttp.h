@@ -27,6 +27,79 @@ namespace HTTP_UTIL
     const char* LOCATION_HEADER PROGMEM = "location:";
     const char* HTTP_VER PROGMEM = " HTTP/1.1";
 
+    inline void printContentLength(WiFiClientSecure &client, unsigned long contentLength, char *buffer, size_t bufferSize)
+    {
+        snprintf(buffer, bufferSize, "Content-Length: %lu", contentLength);
+        client.println(buffer);
+        client.println();
+    }
+
+    inline int getStatusCode(const uint8_t *buf, uint8_t length)
+    {
+        if (length < 13)
+        {
+            return -1;
+        }
+
+        char status[4];
+        strncpy(status, (char*) buf+9, 3);
+        status[3] = 0;
+        return atoi(status);
+    }
+
+    inline bool doChunkedHttpRequest(WiFiClientSecure& client,
+                                  const char* url,
+                                  const char* hostname,
+                                  const __FlashStringHelper *method,
+                                  std::function<void(WiFiClientSecure& client)> sendBodyFn,
+                                  std::function<bool(const uint8_t buf[64], uint8_t length)> callbackFn,
+                                  const char* contentType = nullptr)
+    {
+        if (!client.connect(hostname, 443))
+        {
+            HTTP_LOGN("Connection to host failed.");
+            return false;
+        }
+
+        unsigned int bufferSize = max(256U, strlen(url) + strlen_P((PGM_P) method) + strlen_P(HTTP_UTIL::HTTP_VER) + 1);
+        char headerBuffer[bufferSize];
+
+        strncpy_P(headerBuffer, (PGM_P) method, bufferSize);
+        strcat(headerBuffer, url);
+        strcat_P(headerBuffer, HTTP_VER);
+        client.println(headerBuffer);
+
+        snprintf(headerBuffer, bufferSize, "Host: %s", hostname);
+        client.println(headerBuffer);
+
+        if (contentType == nullptr)
+        {
+            client.println(F("Content-Type: application/json"));
+        }
+        else
+        {
+            client.println(contentType);
+        }
+
+        sendBodyFn(client);
+
+        uint8_t buf[64];
+        while (client.connected())
+        {
+            if (client.available())
+            {
+                size_t readLength = client.readBytes(buf, 64);
+                bool continueReading = callbackFn(buf, readLength);
+                if (!continueReading)
+                {
+                    break;
+                }
+            }
+        }
+        client.stop();
+        return true;
+    }
+
     inline bool doJsonHttpRequest(WiFiClientSecure& client,
                                   const char* url,
                                   const char* hostname,

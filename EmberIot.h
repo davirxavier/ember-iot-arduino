@@ -76,10 +76,7 @@ public:
         inited = true;
         EmberIotChannels::started = true;
         isPaused = false;
-
-#ifdef ESP32
-        configTime(0, 0, "pool.ntp.org");
-#endif
+        FirePropUtil::initTime();
     }
 
     /**
@@ -257,6 +254,11 @@ public:
         delay(100);
         isPaused = false;
         stream->start();
+    }
+
+    const char* getUserUid()
+    {
+        return auth != nullptr ? auth->getUserUid() : nullptr;
     }
 
     /**

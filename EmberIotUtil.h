@@ -81,6 +81,24 @@ namespace FirePropUtil {
         }
         return hash;
     }
+
+    inline void initTime()
+    {
+#ifdef ESP32
+        configTime(0, 0, "pool.ntp.org");
+#endif
+    }
+
+    inline bool isTimeInitialized()
+    {
+        if (WiFi.status() != WL_CONNECTED)
+        {
+            return false;
+        }
+
+        tm time;
+        return getLocalTime(&time);
+    }
 }
 
 #endif //FIREBASE_UTIL_H
