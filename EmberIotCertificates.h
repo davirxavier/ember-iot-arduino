@@ -12,10 +12,7 @@ namespace EmberIotCertificates
 {
     bool init = false;
 
-#ifdef ESP32
-    extern const uint8_t x509_crt_imported_bundle_bin_start[] asm("_binary_x509_crt_bundle_start");
-    extern const uint8_t x509_crt_imported_bundle_bin_end[]   asm("_binary_x509_crt_bundle_end");
-#elif ESP8266
+#if ESP8266
     inline X509List cert(google_root_ca);
 #endif
 
@@ -30,7 +27,7 @@ namespace EmberIotCertificates
 #endif
 
 #ifdef ESP32
-        client.setCACertBundle(x509_crt_imported_bundle_bin_start);
+        client.setCACert(google_root_ca);
 #elif ESP8266
         client.setTrustAnchors(&cert);
 #endif

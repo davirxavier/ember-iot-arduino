@@ -2,9 +2,12 @@
 #define FIREPROP_NOTIF_H
 
 #include <time.h>
-#include <EmberIot.h>
+#include <EmberIotHttp.h>
 #include <EmberIotCryptUtil.h>
+
+#ifdef EMBER_STORAGE_USE_LITTLEFS
 #include <LittleFS.h>
+#endif
 
 #ifndef EMBER_NOTIFICATION_QUEUE_SIZE
 #define EMBER_NOTIFICATION_QUEUE_SIZE 5
@@ -20,21 +23,22 @@
 
 namespace EmberIotNotificationValues
 {
-    const char AUTH_URL[] PROGMEM = "https://oauth2.googleapis.com/token";
+    const char AUTH_PATH[] PROGMEM = "/token";
     const char AUTH_HOST[] PROGMEM = "oauth2.googleapis.com";
-    const uint16_t AUTH_URL_SIZE = strlen_P(AUTH_URL);
 
-    const char SEND_NOTIF_URL[] PROGMEM = "https://fcm.googleapis.com/v1/projects/ember-iot/messages:send";
+    const char SEND_NOTIF_PATH[] PROGMEM = "/v1/projects/ember-iot/messages:send";
     const char SEND_NOTIF_HOST[] PROGMEM = "fcm.googleapis.com";
-    const uint16_t SEND_NOTIF_URL_SIZE = strlen_P(SEND_NOTIF_URL);
+
+    const char SEND_NOTIF_BODY_TOPIC_1[] PROGMEM = R"({"message":{"topic":")";
+    const char SEND_NOTIF_BODY_TITLE_2[] PROGMEM = R"(","notification":{"title":")";
+    const char SEND_NOTIF_BODY_TEXT_3[] PROGMEM = R"(","body":")";
+    const char SEND_NOTIF_BODY_END[] PROGMEM = R"("},"android":{"priority":"high"}}})";
 
     const char GRANT_STR[] PROGMEM = R"({"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":")";
     const uint16_t GRANT_STR_SIZE = strlen_P(GRANT_STR);
 
     const char JWT_HEADER_B64[] PROGMEM = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.";
     const uint16_t JWT_HEADER_B64_SIZE = strlen_P(JWT_HEADER_B64);
-
-    const char ACCESS_TOKEN_DELIMITER[] PROGMEM = R"("access_token":")";
 }
 
 struct EmberIotNotification
@@ -43,7 +47,15 @@ struct EmberIotNotification
     char text[EMBER_NOTIFICATION_MAX_TEXT_SIZE];
 };
 
-class FCMEmberNotifications : WithSecureClient
+enum EmberSendNotificationStatus
+{
+    EMBER_NOTIF_QUEUED,
+    EMBER_NOTIF_QUEUE_FULL,
+    EMBER_NOTIF_TITLE_TOO_BIG,
+    EMBER_NOTIF_TEXT_TOO_BIG
+};
+
+class FCMEmberNotifications
 {
 public:
     /**
@@ -51,55 +63,53 @@ public:
      * @param gcmAccountEmail Google service account e-mail. Should be a flash string.
      *      DON'T USE THE FIREBASE MAIN SERVICE ACCOUNT, IT'S A VERY BIG SECURITY RISK, AS IT HAS EVERY POSSIBLE PERMISSION.
      * @param gcmAccountPrivateKey Google service account primary key. Should be a flash string.
-     * @param littleFsTempTokenLocation Where to persist the generated oauth token in storage. Default is "/ember-iot-temp/notif-token".
+     * @param littleFsTempTokenLocation Where to persist the generated oauth token in storage, if using LittleFS storage. Default is "/ember-iot-temp/notif-token".
      */
     FCMEmberNotifications(
         const __FlashStringHelper *gcmAccountEmail,
+#ifdef EMBER_STORAGE_USE_LITTLEFS
         const __FlashStringHelper *gcmAccountPrivateKey,
         const char *littleFsTempTokenLocation = "/ember-iot-temp/notif-token"
+#else
+        const __FlashStringHelper *gcmAccountPrivateKey
+#endif
     ):
         gcmAccountEmail(gcmAccountEmail),
         gcmAccountPrivateKey(gcmAccountPrivateKey),
         tokenExpiration(0),
         lastExpirationCheck(0),
         lastSentNotifications(0),
-        currentNotification(0),
-        notificationQueue{},
         forceRenew(false),
+        uidInit(false),
         userUid{},
         emberInstance(nullptr),
-        uidInit(false)
+        clientPtr(nullptr),
+        currentNotification(0),
+        notificationQueue{}
     {
+#ifdef EMBER_STORAGE_USE_LITTLEFS
         size_t fileSize = strlen(littleFsTempTokenLocation);
-        this->littleFsTempTokenLocation = (char*)malloc(fileSize + 1);
+        this->littleFsTempTokenLocation = (char*) malloc(fileSize + 1);
         strcpy(this->littleFsTempTokenLocation, littleFsTempTokenLocation);
-
-        this->littleFsTempTokenExpiration = (char*)malloc(fileSize + 5);
-        strcpy(this->littleFsTempTokenExpiration, littleFsTempTokenLocation);
-        strcat(this->littleFsTempTokenExpiration, "-exp");
-    }
-
-    ~FCMEmberNotifications()
-    {
-        free(this->littleFsTempTokenLocation);
+#endif
     }
 
     /**
-     * Initializes this class using an userUid directly. Should be called before loop starts.
-     * @param userUid Firebase user uid.
-     */
-    void init(const char *userUid)
-    {
-        init(userUid, nullptr);
-    }
-
-    /**
-     * Initialized this class using an EmberIot instance. Should be called before loop starts.
+     * Initializes this instance. Always use this init function if using other EmberIoT features.
      * @param emberInstance
      */
     void init(EmberIot *emberInstance)
     {
-        init(nullptr, emberInstance);
+        doInit(nullptr, emberInstance);
+    }
+
+    /**
+     * Initializes this instance with only an userUid. Use this init function if you are not using any other EmberIoT features.
+     * @param userUid User to send notifications to, can be any Firebase auth user from your project.
+     */
+    void init(const char *userUid)
+    {
+        doInit(userUid, nullptr);
     }
 
     /**
@@ -107,7 +117,7 @@ public:
      */
     void loop()
     {
-        if (!FirePropUtil::isTimeInitialized())
+        if (!FirePropUtil::isTimeInitialized() || clientPtr == nullptr)
         {
             return;
         }
@@ -118,6 +128,11 @@ public:
             strcpy(userUid, emberInstance->getUserUid());
         }
 
+        if (!uidInit)
+        {
+            return;
+        }
+
         if (millis() - lastExpirationCheck > 2000)
         {
             time_t now;
@@ -126,58 +141,78 @@ public:
             if (now > tokenExpiration || forceRenew)
             {
                 HTTP_LOGN("Notification token expired, renewing.");
+
+#ifdef ESP32
                 renewToken();
+#elif ESP8266
+                emberInstance->pause();
+                renewToken();
+                emberInstance->resume();
+#endif
+
                 forceRenew = false;
             }
 
             lastExpirationCheck = millis();
         }
-
-        if (millis() - lastSentNotifications > 100)
+        else  if (millis() - lastSentNotifications > 150)
         {
+#ifdef ESP32
             sendPending();
+#elif ESP8266
+            emberInstance->pause();
+            sendPending();
+            emberInstance->resume();
+#endif
             lastSentNotifications = millis();
         }
     }
 
     /**
-     * Send a notification using the FCM service. This function is not synchronous, it will add the notification to a queue.
+     * Send a notification using the FCM service. This function is not synchronous, it will add the notification to a send queue.
      *
      * @param title Notification title. Max size of EMBER_NOTIFICATION_MAX_TITLE_SIZE.
      * @param text Notification text. Max size of EMBER_NOTIFICATION_MAX_TEXT_SIZE.
-     * @return false if queue is full or title and text are too big, true if success.
+     * @return See the EmberSendNotificationStatus enum for cases.
      */
-    bool send(const char *title, const char *text)
+    EmberSendNotificationStatus send(const char *title, const char *text)
     {
         if (currentNotification >= EMBER_NOTIFICATION_QUEUE_SIZE)
         {
             HTTP_LOGN("Notification queue is full.");
-            return false;
+            return EMBER_NOTIF_QUEUE_FULL;
         }
 
         if (strlen(title)+1 > EMBER_NOTIFICATION_MAX_TITLE_SIZE)
         {
             HTTP_LOGN("Title too big.");
-            return false;
+            return EMBER_NOTIF_TITLE_TOO_BIG;
         }
 
         if (strlen(text)+1 > EMBER_NOTIFICATION_MAX_TEXT_SIZE)
         {
             HTTP_LOGN("Text too big.");
-            return false;
+            return EMBER_NOTIF_TEXT_TOO_BIG;
         }
 
         strcpy(notificationQueue[currentNotification].title, title);
         strcpy(notificationQueue[currentNotification].text, text);
         currentNotification++;
-        return true;
+        return EMBER_NOTIF_QUEUED;
     }
 
 private:
-    void init(const char *userUid, EmberIot *emberInstance)
+
+    /**
+     * Initializes this class. Should be called before loop starts.
+     * @param userUid Firebase user uid.
+     * @param emberInstance EmberIot instance.
+     */
+    void doInit(const char *userUid, EmberIot *emberInstance)
     {
         FirePropUtil::initTime();
 
+#ifdef EMBER_STORAGE_USE_LITTLEFS
 #ifdef ESP32
         if (!LittleFS.begin(false /* false: Do not format if mount failed */))
         {
@@ -206,12 +241,15 @@ private:
             LittleFS.mkdir(buf);
         }
 
-        if (LittleFS.exists(littleFsTempTokenExpiration))
+        char expLocation[strlen(littleFsTempTokenLocation)+5];
+        sprintf(expLocation, "%s-exp", littleFsTempTokenLocation);
+        if (LittleFS.exists(expLocation))
         {
-            File expFile = LittleFS.open(littleFsTempTokenExpiration, "r");
+            File expFile = LittleFS.open(expLocation, "r");
             tokenExpiration = expFile.readString().toInt();
             expFile.close();
         }
+#endif
 
         if (userUid != nullptr)
         {
@@ -219,6 +257,17 @@ private:
             uidInit = true;
         }
         this->emberInstance = emberInstance;
+
+        if (emberInstance != nullptr)
+        {
+            clientPtr = emberInstance->getWifiClient();
+        }
+
+        if (clientPtr == nullptr)
+        {
+            auto ch = new WithSecureClient();
+            clientPtr = &ch->client;
+        }
     }
 
     void sendPending()
@@ -233,67 +282,77 @@ private:
             return;
         }
 
+#ifdef EMBER_STORAGE_USE_LITTLEFS
         if (!LittleFS.exists(this->littleFsTempTokenLocation))
         {
             HTTP_LOGN("Auth file does not exist, trying again later.");
             return;
         }
+#else
+        if (strlen(currentToken) == 0)
+        {
+            return;
+        }
+#endif
+
+        HTTP_LOGN("Send pending notifications.");
 
         EmberIotNotification notif = notificationQueue[currentNotification-1];
 
-        JsonDocument doc;
+        size_t contentLength = strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TOPIC_1) +
+            strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TITLE_2) +
+            strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TEXT_3) +
+            strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_END) +
+            strlen(userUid) +
+            strlen(notif.text) +
+            strlen(notif.title);
 
-        JsonObject message = doc[F("message")].to<JsonObject>();
-        message[F("topic")] = userUid;
+        WiFiClientSecure &client = *clientPtr;
 
-        JsonObject message_notification = message[F("notification")].to<JsonObject>();
-        message_notification[F("title")] = notif.title;
-        message_notification[F("body")] = notif.text;
-        message[F("android")][F("priority")] = F("high");
+        char host[strlen_P(EmberIotNotificationValues::SEND_NOTIF_HOST)+1];
+        strcpy_P(host, EmberIotNotificationValues::SEND_NOTIF_HOST);
 
-        doc.shrinkToFit();
-
-        File authFile = LittleFS.open(this->littleFsTempTokenLocation, "r");
-
-        int responseStatus = 0;
-
-        HTTP_LOGN("Sending notification.");
-        bool completed = HTTP_UTIL::doChunkedHttpRequest(client,
-            EmberIotNotificationValues::SEND_NOTIF_URL,
-            EmberIotNotificationValues::SEND_NOTIF_HOST,
-            FPSTR(HTTP_UTIL::METHOD_POST),
-            [&doc, &authFile](WiFiClientSecure &client)
-            {
-                client.print(F("Authorization: Bearer "));
-                char buffer[64];
-                while (authFile.available())
-                {
-                    size_t read = authFile.readBytes(buffer, 64);
-                    for (size_t i = 0; i < read; i++)
-                    {
-                        client.print(buffer[i]);
-                    }
-                }
-                client.println();
-                HTTP_UTIL::printContentLength(client, measureJson(doc), buffer, 64);
-                serializeJson(doc, client);
-
-                HTTP_LOGN("Notification request body:");
-#ifdef EMBER_ENABLE_LOGGING
-                serializeJson(doc, Serial);
-                Serial.println();
-#endif
-            },
-            [&responseStatus](const uint8_t buf[64], uint8_t length)
-            {
-                responseStatus = HTTP_UTIL::getStatusCode(buf, length);
-                HTTP_LOGF("Status: %d\n", responseStatus);
-                return false;
-            });
-
-        if (responseStatus <= 0 || !completed)
+        if (!HTTP_UTIL::connectToHost(host, client))
         {
-            HTTP_LOGN("Request error.");
+            HTTP_LOGN("Error while connecting, trying again later.");
+            return;
+        }
+        HTTP_UTIL::printHttpProtocol(FPSTR(EmberIotNotificationValues::SEND_NOTIF_PATH), FPSTR(HTTP_UTIL::METHOD_POST), client);
+        HTTP_UTIL::printHost(host, client);
+        HTTP_UTIL::printContentType(client);
+
+        HTTP_PRINT_BOTH("Authorization: Bearer ", client);
+
+#ifdef EMBER_STORAGE_USE_LITTLEFS
+        File tokenFile = LittleFS.open(littleFsTempTokenLocation, "r");
+        HTTP_UTIL::printChunked(tokenFile, client);
+        client.println();
+        tokenFile.close();
+#else
+        HTTP_PRINT_BOTH(currentToken, client);
+        HTTP_PRINT_LN(client);
+        HTTP_LOGN();
+#endif
+
+        HTTP_UTIL::printContentLengthAndEndHeaders(contentLength, client);
+
+        EMBER_DEBUGN("Body: ");
+        HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_TOPIC_1), client);
+        HTTP_PRINT_BOTH(userUid, client);
+        HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_TITLE_2), client);
+        HTTP_PRINT_BOTH(notif.title, client);
+        HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_TEXT_3), client);
+        HTTP_PRINT_BOTH(notif.text, client);
+        HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_END), client);
+        EMBER_DEBUGN();
+
+        int responseStatus = HTTP_UTIL::getStatusCode(client);
+        HTTP_LOGF("Response status: %d\n", responseStatus);
+        client.stop();
+
+        if (responseStatus <= 0)
+        {
+            HTTP_LOGF("Send notification request error: %d\n", responseStatus);
             return;
         }
 
@@ -304,10 +363,14 @@ private:
             forceRenew = true;
         }
 
-        if (responseStatus == 200)
+        if (HTTP_UTIL::isSuccess(responseStatus))
         {
             HTTP_LOGN("Notification sent successfully.");
             currentNotification--;
+        }
+        else
+        {
+            HTTP_LOGF("Send notification request error: %d\n", responseStatus);
         }
     }
 
@@ -326,7 +389,6 @@ private:
         strcpy_P(privateKeyBuf, (PGM_P) gcmAccountPrivateKey);
 #endif
 
-
         size_t emailSize = strlen_P((PGM_P) gcmAccountEmail);
         char email[emailSize+1];
         strcpy_P(email, (PGM_P) gcmAccountEmail);
@@ -337,7 +399,11 @@ private:
         time(&now);
 
 #ifdef ESP32
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+        const char bodyPattern[] = R"({"scope":"https://www.googleapis.com/auth/firebase.messaging","aud":"https://oauth2.googleapis.com/token","iss":"%s","exp":"%lld","iat":"%lld"})";
+#else
         const char bodyPattern[] = R"({"scope":"https://www.googleapis.com/auth/firebase.messaging","aud":"https://oauth2.googleapis.com/token","iss":"%s","exp":"%ld","iat":"%ld"})";
+#endif
 #elif ESP8266
         const char bodyPattern[] = R"({"scope":"https://www.googleapis.com/auth/firebase.messaging","aud":"https://oauth2.googleapis.com/token","iss":"%s","exp":"%lld","iat":"%lld"})";
 #endif
@@ -386,6 +452,8 @@ private:
             (unsigned char*) bodyBuf,
             strlen(bodyBuf));
 
+        free(bodyBuf);
+
         int removedChars = base64urlencode(buf);
         written = written - removedChars;
         buf[bodyIndex+written] = 0;
@@ -404,82 +472,92 @@ private:
 
         HTTP_LOGF("Fetching token for notification auth with body:\n%s\n", buf);
 
-        size_t delimiterSize = strlen_P(EmberIotNotificationValues::ACCESS_TOKEN_DELIMITER);
-        char delimiter[delimiterSize+1];
-        strcpy_P(delimiter, EmberIotNotificationValues::ACCESS_TOKEN_DELIMITER);
-        size_t currentDelimiterChar = 0;
+        WiFiClientSecure &client = *clientPtr;
 
+        char hostBuf[strlen_P(EmberIotNotificationValues::AUTH_HOST)+1];
+        strcpy_P(hostBuf, EmberIotNotificationValues::AUTH_HOST);
+
+        if (!HTTP_UTIL::connectToHost(hostBuf, client))
+        {
+            HTTP_LOGN("Connection failed, retrying later.");
+            return false;
+        }
+
+        HTTP_UTIL::printHttpProtocol(FPSTR(EmberIotNotificationValues::AUTH_PATH), FPSTR(HTTP_UTIL::METHOD_POST), client);
+        HTTP_UTIL::printHost(hostBuf, client);
+        HTTP_UTIL::printContentType(client);
+
+        size_t bodySize = strlen(buf);
+        HTTP_UTIL::printContentLengthAndEndHeaders(bodySize, client);
+
+        EMBER_DEBUGF("Body (length %zu):\n", bodySize);
+        HTTP_PRINT_BOTH(buf, client);
+        EMBER_DEBUGN();
+        free(buf);
+
+        int responseStatus = HTTP_UTIL::getStatusCode(client);
+        if (responseStatus == 0 || !HTTP_UTIL::isSuccess(responseStatus))
+        {
+            HTTP_LOGF("Error while trying to generate notifications token: %d\n", responseStatus);
+            client.stop();
+            return false;
+        }
+
+        if (!client.find(R"("access_token":")"))
+        {
+            HTTP_LOGN("Token not found in response for notification auth.");
+            client.stop();
+            return false;
+        }
+
+#ifdef EMBER_STORAGE_USE_LITTLEFS
         File tokenFile = LittleFS.open(this->littleFsTempTokenLocation, "w");
         if (!tokenFile)
         {
             HTTP_LOGN("Failed to open token file, cancelling renew.");
+            client.stop();
             return false;
         }
-
-        HTTP_UTIL::doChunkedHttpRequest(client,
-            EmberIotNotificationValues::AUTH_URL,
-            EmberIotNotificationValues::AUTH_HOST,
-            FPSTR(HTTP_UTIL::METHOD_POST),
-            [bodyBuf, finalBodySize, buf](WiFiClientSecure &client)
-            {
-                HTTP_UTIL::printContentLength(client, strlen(buf), bodyBuf, finalBodySize);
-                client.print(buf);
-            },
-            [&delimiter, &currentDelimiterChar, &delimiterSize, &tokenFile](const uint8_t buf[64], uint8_t length)
-            {
-                for (int i = 0; i < length; i++)
-                {
-                    if (currentDelimiterChar >= delimiterSize)
-                    {
-                        if (buf[i] == '"')
-                        {
-                            return false;
-                        }
-
-                        tokenFile.print((char)buf[i]);
-                        continue;
-                    }
-
-                    if (isspace(buf[i]))
-                    {
-                        continue;
-                    }
-
-                    if (buf[i] == delimiter[currentDelimiterChar])
-                    {
-                        currentDelimiterChar++;
-                    }
-                    else
-                    {
-                        currentDelimiterChar = 0;
-                    }
-                }
-
-                return true;
-            });
-
+        HTTP_UTIL::printChunkedUntil(client, tokenFile, R"(")");
         tokenFile.close();
-        free(buf);
-        free(bodyBuf);
-
-        if (currentDelimiterChar < delimiterSize)
-        {
-            HTTP_LOGN("Access token not found in response object.");
-            return false;
-        }
+        client.stop();
 
         tokenExpiration = now + 3400;
-        File expFile = LittleFS.open(littleFsTempTokenExpiration, "w");
+        char expLocation[strlen(littleFsTempTokenLocation)+5];
+        sprintf(expLocation, "%s-exp", littleFsTempTokenLocation);
+        File expFile = LittleFS.open(expLocation, "w");
         expFile.print(tokenExpiration);
         expFile.close();
-        HTTP_LOGN("Saved token successfully.");
+
+#ifdef EMBER_ENABLE_LOGGING
+        tokenFile = LittleFS.open(this->littleFsTempTokenLocation, "r");
+        expFile = LittleFS.open(expLocation, "r");
+        HTTP_LOGF("Saved token successfully (expiration %lu): %s\n", expFile.readString().toInt(), tokenFile.readString().c_str());
+        tokenFile.close();
+        expFile.close();
+#endif
+#else
+        size_t read = client.readBytesUntil('"', currentToken, sizeof(currentToken)-1);
+        EMBER_DEBUGF("Read %zu bytes from stream\n", read);
+        currentToken[read < sizeof(currentToken)-1 ? read : sizeof(currentToken)-1] = 0;
+        tokenExpiration = now + 3400;
+
+        HTTP_LOGF("Notif token read into memory: %s\n", currentToken);
+        HTTP_LOGF("Notif token expiration: %lu\n", tokenExpiration);
+        client.stop();
+#endif
         return true;
     }
 
     const __FlashStringHelper *gcmAccountEmail;
     const __FlashStringHelper *gcmAccountPrivateKey;
+
+#ifdef EMBER_STORAGE_USE_LITTLEFS
     char *littleFsTempTokenLocation;
-    char *littleFsTempTokenExpiration;
+#else
+    char currentToken[1024]{};
+#endif
+
     time_t tokenExpiration;
     unsigned long lastExpirationCheck;
     unsigned long lastSentNotifications;
@@ -488,6 +566,7 @@ private:
     bool uidInit;
     char userUid[64];
     EmberIot *emberInstance;
+    WiFiClientSecure *clientPtr;
 
     uint8_t currentNotification;
     EmberIotNotification notificationQueue[EMBER_NOTIFICATION_QUEUE_SIZE];

@@ -1,7 +1,6 @@
 #ifndef EMBER_GOOGLE_ROOT_CA_H
 #define EMBER_GOOGLE_ROOT_CA_H
 
-#ifdef ESP8266
 
 const char google_root_ca[] PROGMEM = R"CERT(
 -----BEGIN CERTIFICATE-----
@@ -37,5 +36,4 @@ bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c
 -----END CERTIFICATE-----
 )CERT";
 
-#endif
 #endif

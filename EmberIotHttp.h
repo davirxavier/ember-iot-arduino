@@ -5,19 +5,49 @@
 #ifndef HTTP_UTIL_H
 #define HTTP_UTIL_H
 
-#include <ArduinoJson.h>
+#include <EmberIotUtil.h>
 #include <WiFiClientSecure.h>
 
 #ifdef EMBER_ENABLE_LOGGING
-#define HTTP_LOGN(str) Serial.println(str)
-#define HTTP_LOGF(str, p...) Serial.printf(str, p)
+#define HTTP_LOG(str) Serial.print(str)
+#define HTTP_LOGN(str) Serial.print("[EMBER-IOT-HTTP] "); Serial.println(str)
+#define HTTP_LOGF(str, p...) Serial.print("[EMBER-IOT-HTTP] "); Serial.printf(str, p)
 #else
 #define HTTP_LOGN(str)
 #define HTTP_LOGF(str, p...)
 #endif
 
+#ifndef EMBER_HTTP_BUFFER_SIZE
+#define EMBER_HTTP_BUFFER_SIZE 64
+#endif
+
+#ifdef EMBER_ENABLE_DEBUG_LOG
+#define EMBER_DEBUG(str) Serial.print(str)
+#define EMBER_DEBUGN(str) Serial.print("[EMBER-IOT-DEBUG] "); Serial.println(str)
+#define EMBER_DEBUGF(str, p...) Serial.print("[EMBER-IOT-DEBUG] "); Serial.printf(str, p)
+
+#ifdef ESP32
+#define EMBER_PRINT_MEM(str) Serial.print("[EMBER-IOT-DEBUG] "); EMBER_DEBUG(str); Serial.printf(" (free/total): %lu/%lu\n", esp_get_free_heap_size(), heap_caps_get_total_size(MALLOC_CAP_8BIT))
+#elif ESP8266
+#define EMBER_PRINT_MEM(str) Serial.print("[EMBER-IOT-DEBUG] "); EMBER_DEBUG(str); Serial.printf(" (free): %du\n", ESP.getFreeHeap())
+#endif
+
+#else
+#define EMBER_DEBUG(str)
+#define EMBER_DEBUGN(str)
+#define EMBER_DEBUGF(pattern, p...)
+#define EMBER_PRINT_MEM(str)
+#endif
+
+#define HTTP_PRINT_LN(stream) EMBER_DEBUGN(""); stream.print("\r\n")
+#define HTTP_PRINT_BOTH(val, stream) EMBER_DEBUG(val); stream.print(val)
+#define HTTP_PRINT_BOTH(val, stream) EMBER_DEBUG(val); stream.print(val)
+#define HTTP_PRINT_BOTH_2(val) EMBER_DEBUG(val); client.print(val)
+
 namespace HTTP_UTIL
 {
+    typedef uint8_t buffer_t[EMBER_HTTP_BUFFER_SIZE];
+
     const char* METHOD_POST PROGMEM = "POST ";
     const char* METHOD_GET PROGMEM = "GET ";
     const char* METHOD_PUT PROGMEM = "PUT ";
@@ -27,291 +57,296 @@ namespace HTTP_UTIL
     const char* LOCATION_HEADER PROGMEM = "location:";
     const char* HTTP_VER PROGMEM = " HTTP/1.1";
 
-    inline void printContentLength(WiFiClientSecure &client, unsigned long contentLength, char *buffer, size_t bufferSize)
+    inline bool isSuccess(int statusCode)
     {
-        snprintf(buffer, bufferSize, "Content-Length: %lu", contentLength);
-        client.println(buffer);
-        client.println();
+        return statusCode >= 200 && statusCode < 300;
     }
 
-    inline int getStatusCode(const uint8_t *buf, uint8_t length)
+    inline int getStatusCode(WiFiClientSecure &client)
     {
-        if (length < 13)
-        {
-            return -1;
-        }
+        EMBER_DEBUG("Reading status code: ");
+        char code[4]{0};
+        uint8_t currentCodeChar = 0;
 
-        char status[4];
-        strncpy(status, (char*) buf+9, 3);
-        status[3] = 0;
-        return atoi(status);
-    }
-
-    inline bool doChunkedHttpRequest(WiFiClientSecure& client,
-                                  const char* url,
-                                  const char* hostname,
-                                  const __FlashStringHelper *method,
-                                  std::function<void(WiFiClientSecure& client)> sendBodyFn,
-                                  std::function<bool(const uint8_t buf[64], uint8_t length)> callbackFn,
-                                  const char* contentType = nullptr)
-    {
-        if (!client.connect(hostname, 443))
-        {
-            HTTP_LOGN("Connection to host failed.");
-            return false;
-        }
-
-        unsigned int bufferSize = max(256U, strlen(url) + strlen_P((PGM_P) method) + strlen_P(HTTP_UTIL::HTTP_VER) + 1);
-        char headerBuffer[bufferSize];
-
-        strncpy_P(headerBuffer, (PGM_P) method, bufferSize);
-        strcat(headerBuffer, url);
-        strcat_P(headerBuffer, HTTP_VER);
-        client.println(headerBuffer);
-
-        snprintf(headerBuffer, bufferSize, "Host: %s", hostname);
-        client.println(headerBuffer);
-
-        if (contentType == nullptr)
-        {
-            client.println(F("Content-Type: application/json"));
-        }
-        else
-        {
-            client.println(contentType);
-        }
-
-        sendBodyFn(client);
-
-        uint8_t buf[64];
+        bool spaceFound = false;
+        bool hasRead = false;
         while (client.connected())
         {
             if (client.available())
             {
-                size_t readLength = client.readBytes(buf, 64);
-                bool continueReading = callbackFn(buf, readLength);
-                if (!continueReading)
+                hasRead = true;
+                char c = client.read();
+                EMBER_DEBUG(c);
+                bool isSpace = isspace((unsigned char) c);
+                if (isSpace && !spaceFound)
                 {
-                    break;
+                    spaceFound = true;
+                }
+
+                if (spaceFound && isSpace)
+                {
+                    continue;
+                }
+
+                if (spaceFound)
+                {
+                    EMBER_DEBUG(c);
+                    code[currentCodeChar] = c;
+                    currentCodeChar++;
+
+                    if (currentCodeChar >= 3)
+                    {
+                        code[currentCodeChar] = 0;
+                        break;
+                    }
                 }
             }
-        }
-        client.stop();
-        return true;
-    }
-
-    inline bool doJsonHttpRequest(WiFiClientSecure& client,
-                                  const char* url,
-                                  const char* hostname,
-                                  const __FlashStringHelper *method,
-                                  const char* requestBody,
-                                  JsonDocument* filter = nullptr,
-                                  JsonDocument* responseDoc = nullptr,
-                                  const char* contentType = nullptr)
-    {
-        if (!client.connect(hostname, 443))
-        {
-            HTTP_LOGN("Connection to host failed.");
-            return false;
-        }
-
-        unsigned int bufferSize = max(256U, strlen(url) + strlen_P((PGM_P) method) + strlen_P(HTTP_UTIL::HTTP_VER) + 1);
-        char headerBuffer[bufferSize];
-
-        strncpy_P(headerBuffer, (PGM_P) method, bufferSize);
-        strcat(headerBuffer, url);
-        strcat_P(headerBuffer, HTTP_VER);
-        client.println(headerBuffer);
-
-        snprintf(headerBuffer, bufferSize, "Host: %s", hostname);
-        client.println(headerBuffer);
-
-        if (contentType == nullptr)
-        {
-            client.println(F("Content-Type: application/json"));
-        }
-        else
-        {
-            client.println(contentType);
-        }
-
-        snprintf(headerBuffer, bufferSize, "Content-Length: %d", strlen(requestBody));
-        client.println(headerBuffer);
-
-        client.println();
-        client.print(requestBody);
-
-        String response;
-        while (client.connected())
-        {
-            if (client.available())
+            else if (hasRead)
             {
-                response = client.readString();
                 break;
             }
         }
+        EMBER_DEBUGN("");
+        EMBER_DEBUGF("Status code string: %s\n", code);
+        if (currentCodeChar < 3)
+        {
+            return -1;
+        }
+
+        client.find("\n");
+
+        int ret = -1;
+        if (FirePropUtil::str2int(&ret, code, 10) != FirePropUtil::STR2INT_SUCCESS)
+        {
+            return -1;
+        }
+
+        EMBER_DEBUGF("Parsed status code: %d\n", ret);
+        return ret;
+    }
+
+    inline void disconnect(WiFiClientSecure &client)
+    {
         client.stop();
+#ifdef ESP32
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+        client.clear();
+#else
+        client.flush();
+#endif
+#endif
+    }
 
-        if (!response.startsWith(F("HTTP/1.1 2")))
+    inline bool connectToHost(const char *hostname, WiFiClientSecure &client)
+    {
+        EMBER_DEBUGF("New https request for host: %s\n", hostname);
+        disconnect(client);
+
+#ifdef EMBER_HTTP_INSECURE
+        client.setInsecure();
+#endif
+
+        if (!client.connect(hostname, 443))
         {
-            HTTP_LOGF("HTTP response is not OK: %s\n", response.c_str());
+            EMBER_DEBUGN("Connection to host failed.");
             return false;
         }
-
-        if (responseDoc == nullptr)
-        {
-            return true;
-        }
-
-        int bodyStartIndex = response.indexOf("\r\n\r\n");
-        bodyStartIndex = bodyStartIndex != -1 ? bodyStartIndex + 4 : 0;
-        bodyStartIndex = response.indexOf("\r\n", bodyStartIndex);
-        bodyStartIndex = bodyStartIndex != -1 ? bodyStartIndex + 2 : 0;
-
-        const DeserializationError error = filter != nullptr
-                                               ? deserializeJson(*responseDoc,
-                                                                 response.substring(bodyStartIndex),
-                                                                 DeserializationOption::Filter(*filter))
-                                               : deserializeJson(*responseDoc, response.substring(bodyStartIndex));
-        if (error)
-        {
-            HTTP_LOGF("JSON response parse error: %s\n", error.c_str());
-            return false;
-        }
-
         return true;
     }
 
-    inline int connectToTextStream(WiFiClientSecure& client,
-                                   const char* url,
-                                   const char* hostname,
-                                   const __FlashStringHelper *method,
-                                   uint8_t maxRedirection = 10,
-                                   uint8_t currentRedirection = 0)
+    inline void printHttpMethod(const __FlashStringHelper *method, WiFiClientSecure &client)
     {
-        HTTP_LOGF("Connecting to text stream at: %s\n", url);
-        if (!client.connect(hostname, 443))
+        HTTP_PRINT_BOTH(method, client);
+    }
+
+    inline void printHttpVer(WiFiClientSecure &client)
+    {
+        HTTP_PRINT_BOTH(FPSTR(HTTP_VER), client);
+        EMBER_DEBUGN();
+        HTTP_PRINT_LN(client);
+    }
+
+    inline void printHttpProtocol(const __FlashStringHelper *path, const __FlashStringHelper *method, WiFiClientSecure &client)
+    {
+        printHttpMethod(method, client);
+        HTTP_PRINT_BOTH(path, client);
+        printHttpVer(client);
+    }
+
+    inline void printHost(const char *host, WiFiClientSecure &client)
+    {
+        HTTP_PRINT_BOTH(F("Host: "), client);
+        HTTP_PRINT_BOTH(host, client);
+        EMBER_DEBUGN();
+        HTTP_PRINT_LN(client);
+    }
+
+    inline void printContentType(WiFiClientSecure &client, const char *contentType = "application/json")
+    {
+        HTTP_PRINT_BOTH(F("Content-Type: "), client);
+        HTTP_PRINT_BOTH(contentType, client);
+        EMBER_DEBUGN();
+        HTTP_PRINT_LN(client);
+    }
+
+    inline void printContentLengthAndEndHeaders(unsigned long contentLength, WiFiClientSecure &client)
+    {
+        HTTP_PRINT_BOTH(F("Content-Length: "), client);
+        HTTP_PRINT_BOTH(contentLength, client);
+        EMBER_DEBUGN();
+        HTTP_PRINT_LN(client);
+        HTTP_PRINT_LN(client);
+    }
+
+    /**
+     * Write from input to output until terminator is found (exclusive).
+     */
+    inline bool printChunkedUntil(Stream &input, Stream &output, const char *terminator)
+    {
+        size_t currentTerminatorChar = 0;
+        size_t terminatorLength = strlen(terminator);
+        const size_t bufferSize = EMBER_HTTP_BUFFER_SIZE;
+
+        uint8_t readBuf[bufferSize];
+        uint8_t writeBuf[bufferSize];
+
+        while (input.available())
         {
-            Serial.println("Connection failed!");
-            return -1;
-        }
-        HTTP_LOGN("Connected!");
+            size_t read = input.readBytes(readBuf, bufferSize);
 
-        unsigned int bufferSize = max(256U, strlen(url) + strlen_P((PGM_P) method) + strlen_P(HTTP_UTIL::HTTP_VER) + 1);
-        char headerBuffer[bufferSize];
-        headerBuffer[0] = 0;
-
-        strncpy_P(headerBuffer, (PGM_P) method, bufferSize);
-        strcat(headerBuffer, url);
-        strcat_P(headerBuffer, HTTP_VER);
-        client.println(headerBuffer);
-
-        snprintf(headerBuffer, bufferSize, "Host: %s", hostname);
-        client.println(headerBuffer);
-
-        client.println(F("Accept: text/event-stream"));
-        client.println(F("Connection: keep-alive"));
-        client.println();
-
-        HTTP_LOGN("Looking for status and location header.");
-        unsigned int locationSize = strlen_P(LOCATION_HEADER);
-        char locationHeader[locationSize+1];
-        strcpy_P(locationHeader, LOCATION_HEADER);
-
-        unsigned int currentLocationChar = 0;
-        int status = -1;
-
-        while (client.connected())
-        {
-            if (client.available())
+            for (size_t i = 0; i < read; i++)
             {
-                client.read();
-                if (status == -1)
+                char c = readBuf[i];
+                writeBuf[i] = c;
+
+                if (terminator[currentTerminatorChar] == c)
                 {
-                    client.readBytesUntil('\n', headerBuffer, 255);
+                    currentTerminatorChar++;
 
-                    char* firstSpace = strchr(headerBuffer, ' ');
-                    if (firstSpace == nullptr)
+                    if (currentTerminatorChar >= terminatorLength)
                     {
-                        return -1;
+                        output.write(writeBuf, i);
+                        return true;
                     }
-
-                    firstSpace++;
-                    char* lastSpace = strchr(firstSpace + 1, ' ');
-                    if (lastSpace == nullptr)
-                    {
-                        return -1;
-                    }
-
-                    status = strtoul(firstSpace, &lastSpace, 10);
-                    HTTP_LOGF("Stream connect HTTP response status: %d.\n", status);
-                    if (status != 200)
-                    {
-                        return status;
-                    }
-                }
-
-                const char c = tolower(client.read());
-
-                if (currentLocationChar < locationSize && c == locationHeader[currentLocationChar])
-                {
-                    currentLocationChar++;
                 }
                 else
                 {
-                    currentLocationChar = 0;
+                    currentTerminatorChar = 0;
                 }
+            }
 
-                if (currentLocationChar >= locationSize)
+            output.write(writeBuf, read);
+        }
+
+        return false;
+    }
+
+    inline void printChunked(Stream &input, Stream &output)
+    {
+        uint8_t buf[EMBER_HTTP_BUFFER_SIZE];
+        while (input.available())
+        {
+            size_t read = input.readBytes(buf, EMBER_HTTP_BUFFER_SIZE);
+            output.write(buf, read);
+        }
+    }
+
+    inline bool findSkipWhitespace(Stream &stream, const char *terminator, bool ignoreCase = false, bool skipOnlySpaces = false)
+    {
+        size_t terminatorLength = strlen(terminator);
+        size_t currentTerminatorChar = 0;
+
+        while (stream.available())
+        {
+            char c = ignoreCase ? tolower(stream.read()) : stream.read();
+
+            if (skipOnlySpaces)
+            {
+                if (c == ' ')
                 {
-                    String location = client.readStringUntil('\n');
-                    location.trim();
+                    continue;
+                }
+            }
+            else if (isspace((unsigned char) c))
+            {
+                continue;
+            }
 
-                    HTTP_LOGF("Location header found, redirecting to: %s\n", location.c_str());
-                    client.stop();
+            if ((ignoreCase ? tolower(terminator[currentTerminatorChar]) : terminator[currentTerminatorChar]) == c)
+            {
+                currentTerminatorChar++;
 
-                    if (currentRedirection > maxRedirection)
-                    {
-                        HTTP_LOGN("Redirection limit reached, stopping connection.");
-                        return -1;
-                    }
-
-                    if (location.startsWith("https"))
-                    {
-                        headerBuffer[0] = 0;
-                        strcpy(headerBuffer, location.c_str() + 8);
-
-                        unsigned int newHostLength = strlen(headerBuffer);
-                        for (unsigned int i = 0; i < newHostLength; i++)
-                        {
-                            if (headerBuffer[i] == '/')
-                            {
-                                headerBuffer[i] = 0;
-                                break;
-                            }
-                        }
-
-                        return connectToTextStream(client, location.c_str(), headerBuffer, method, maxRedirection,
-                                                   currentRedirection + 1);
-                    }
-                    else
-                    {
-                        snprintf(headerBuffer, bufferSize, location.startsWith("/") ? "https://%s%s" : "https://%s/%s",
-                                 hostname,
-                                 location.c_str());
-                        return connectToTextStream(client, headerBuffer, hostname, method, maxRedirection,
-                                                   currentRedirection + 1);
-                    }
+                if (currentTerminatorChar >= terminatorLength)
+                {
+                    return true;
                 }
             }
             else
             {
-                break;
+                currentTerminatorChar = 0;
             }
         }
 
-        HTTP_LOGN("No redirection found, connection successful.");
-        return 200;
+        return false;
+    }
+
+    /**
+     * Reads stream until the first occurence of any of the passed strings, ignoring any whitespace.
+     *
+     * @param stream
+     * @param terminators List of strings to search for.
+     * @param arrayLength Length of the string array.
+     * @return Index (0-based) of the first terminator found, or -1 if none are found.
+     */
+    inline int findFirstSkipWhitespace(Stream &stream, const char **terminators, size_t arrayLength, bool ignoreCase = false, bool skipOnlySpaces = false)
+    {
+        size_t terminatorLengths[arrayLength];
+        size_t currentTerminatorChars[arrayLength];
+
+        for (size_t i = 0; i < arrayLength; i++)
+        {
+            terminatorLengths[i] = strlen(terminators[i]);
+            currentTerminatorChars[i] = 0;
+        }
+
+        while (stream.available())
+        {
+            int r = stream.read();
+            char c = ignoreCase ? tolower(r) : r;
+
+            if (skipOnlySpaces)
+            {
+                if (c == ' ')
+                {
+                    continue;
+                }
+            }
+            else if (isspace((unsigned char) c))
+            {
+                continue;
+            }
+
+            for (size_t i = 0; i < arrayLength; i++)
+            {
+                const char *terminator = terminators[i];
+
+                if ((ignoreCase ? tolower(terminator[currentTerminatorChars[i]]) : terminator[currentTerminatorChars[i]]) == c)
+                {
+                    currentTerminatorChars[i]++;
+
+                    if (currentTerminatorChars[i] >= terminatorLengths[i])
+                    {
+                        return i;
+                    }
+                }
+                else
+                {
+                    currentTerminatorChars[i] = 0;
+                }
+            }
+        }
+
+        return -1;
     }
 }
 

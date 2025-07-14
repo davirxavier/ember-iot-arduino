@@ -14,7 +14,6 @@ public:
     {
         EmberIotCertificates::addCertificatesToClient(client);
     }
-protected:
     WiFiClientSecure client{};
 };
 

@@ -106,10 +106,17 @@ inline int signRS256(const char *message, const char *privateKey, char *output, 
 
     // Seed the random generator (entropy)
     const char *pers = "esp32_jwt";
+
+
     mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char*)pers, strlen(pers));
 
     // Parse the RSA private key (PEM)
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    int ret = mbedtls_pk_parse_key(&pk, (const unsigned char*) privateKey,strlen(privateKey)+1, nullptr, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
+#else
     int ret = mbedtls_pk_parse_key(&pk, (const unsigned char*) privateKey,strlen(privateKey)+1, nullptr, 0);
+#endif
+
     if (ret != 0) {
         Serial.printf("Failed to parse private key: %d\n", ret);
         return ret;
@@ -122,7 +129,11 @@ inline int signRS256(const char *message, const char *privateKey, char *output, 
     // Sign the hash
     size_t sig_len = 0;
     uint8_t sig[512]; // enough for RSA-2048
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ret = mbedtls_pk_sign(&pk, MBEDTLS_MD_SHA256, hash, 32,sig, sizeof(sig), &sig_len, mbedtls_ctr_drbg_random, &ctr_drbg);
+#else
     ret = mbedtls_pk_sign(&pk, MBEDTLS_MD_SHA256, hash, 32,sig, &sig_len, mbedtls_ctr_drbg_random, &ctr_drbg);
+#endif
     if (ret != 0) {
         Serial.printf("Failed to sign JWT: %d\n", ret);
         return ret;
