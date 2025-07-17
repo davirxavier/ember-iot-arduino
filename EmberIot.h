@@ -185,6 +185,11 @@ public:
      */
     void channelWrite(uint8_t channel, const char* value)
     {
+        if (!checkChannelChanged(updateDataByChannel[channel], value))
+        {
+            return;
+        }
+
         hasUpdateByChannel[channel] = true;
         strncpy(updateDataByChannel[channel], value, EMBER_MAXIMUM_STRING_SIZE);
         updateDataByChannel[channel][EMBER_MAXIMUM_STRING_SIZE] = 0;
@@ -197,8 +202,9 @@ public:
      */
     void channelWrite(uint8_t channel, int value)
     {
-        hasUpdateByChannel[channel] = true;
-        sprintf(updateDataByChannel[channel], "%d", value);
+        char newValStr[EMBER_MAXIMUM_STRING_SIZE];
+        sprintf(newValStr, "%d", value);
+        channelWrite(channel, newValStr);
     }
 
     /**
@@ -208,8 +214,9 @@ public:
      */
     void channelWrite(uint8_t channel, double value)
     {
-        hasUpdateByChannel[channel] = true;
-        sprintf(updateDataByChannel[channel], "%f", value);
+        char newValStr[EMBER_MAXIMUM_STRING_SIZE];
+        sprintf(newValStr, "%f", value);
+        channelWrite(channel, newValStr);
     }
 
     /**
@@ -219,8 +226,9 @@ public:
      */
     void channelWrite(uint8_t channel, long long value)
     {
-        hasUpdateByChannel[channel] = true;
-        sprintf(updateDataByChannel[channel], "%lld", value);
+        char newValStr[EMBER_MAXIMUM_STRING_SIZE];
+        sprintf(newValStr, "%lld", value);
+        channelWrite(channel, newValStr);
     }
 
     void pause()
@@ -255,6 +263,26 @@ public:
     }
 
 private:
+    bool checkChannelChanged(const char *lastVal, const char *newVal)
+    {
+        if (lastVal != nullptr && newVal == nullptr)
+        {
+            return true;
+        }
+
+        if (lastVal == nullptr && newVal != nullptr)
+        {
+            return true;
+        }
+
+        if (lastVal == nullptr && newVal == nullptr)
+        {
+            return false;
+        }
+
+        return strcmp(lastVal, newVal) != 0;
+    }
+
     bool updateChannels()
     {
         if (auth != nullptr && auth->getUserUid() == nullptr)

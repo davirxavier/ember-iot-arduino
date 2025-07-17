@@ -66,12 +66,12 @@ public:
      * @param littleFsTempTokenLocation Where to persist the generated oauth token in storage, if using LittleFS storage. Default is "/ember-iot-temp/notif-token".
      */
     FCMEmberNotifications(
-        const __FlashStringHelper *gcmAccountEmail,
+        const char *gcmAccountEmail,
 #ifdef EMBER_STORAGE_USE_LITTLEFS
         const __FlashStringHelper *gcmAccountPrivateKey,
         const char *littleFsTempTokenLocation = "/ember-iot-temp/notif-token"
 #else
-        const __FlashStringHelper *gcmAccountPrivateKey
+        const char *gcmAccountPrivateKey
 #endif
     ):
         gcmAccountEmail(gcmAccountEmail),
@@ -85,7 +85,8 @@ public:
         emberInstance(nullptr),
         clientPtr(nullptr),
         currentNotification(0),
-        notificationQueue{}
+        notificationQueue{},
+        initCalled(false)
     {
 #ifdef EMBER_STORAGE_USE_LITTLEFS
         size_t fileSize = strlen(littleFsTempTokenLocation);
@@ -117,6 +118,11 @@ public:
      */
     void loop()
     {
+        if (!initCalled)
+        {
+            return;
+        }
+
         if (!FirePropUtil::isTimeInitialized() || clientPtr == nullptr)
         {
             return;
@@ -210,6 +216,7 @@ private:
      */
     void doInit(const char *userUid, EmberIot *emberInstance)
     {
+        initCalled = true;
         FirePropUtil::initTime();
 
 #ifdef EMBER_STORAGE_USE_LITTLEFS
@@ -386,12 +393,12 @@ private:
             return false;
         }
 
-        strcpy_P(privateKeyBuf, (PGM_P) gcmAccountPrivateKey);
+        strcpy_P(privateKeyBuf, gcmAccountPrivateKey);
 #endif
 
-        size_t emailSize = strlen_P((PGM_P) gcmAccountEmail);
+        size_t emailSize = strlen_P(gcmAccountEmail);
         char email[emailSize+1];
-        strcpy_P(email, (PGM_P) gcmAccountEmail);
+        strcpy_P(email, gcmAccountEmail);
 
         time_t now;
         tm timeinfo;
@@ -549,8 +556,8 @@ private:
         return true;
     }
 
-    const __FlashStringHelper *gcmAccountEmail;
-    const __FlashStringHelper *gcmAccountPrivateKey;
+    const char *gcmAccountEmail;
+    const char *gcmAccountPrivateKey;
 
 #ifdef EMBER_STORAGE_USE_LITTLEFS
     char *littleFsTempTokenLocation;
@@ -563,6 +570,7 @@ private:
     unsigned long lastSentNotifications;
     bool forceRenew;
 
+    bool initCalled;
     bool uidInit;
     char userUid[64];
     EmberIot *emberInstance;
