@@ -5,12 +5,15 @@
 #ifndef EMBERSHARED_H
 #define EMBERSHARED_H
 
+#include <EmberChannelDefinition.h>
+
 #ifndef EMBER_CHANNEL_COUNT
 #error "Max channel count not defined, please define the channel count before importing this file like so: #define EMBER_CHANNEL_COUNT 5"
 #error "It doesn't need to be the exact channel number, but it should be equal or more than the number of channels you will use. Each channel will use ~50 bytes of heap."
 #endif
 
-#if EMBER_CHANNEL_COUNT > 99
+#define EMBER_MAX_CHANNEL_COUNT 99
+#if EMBER_CHANNEL_COUNT > EMBER_MAX_CHANNEL_COUNT
 #error "Only 99 channels are supported."
 #endif
 
@@ -19,13 +22,6 @@
 #endif
 
 #define EMBER_BOARD_ID_SIZE 8
-
-#define EMBER_CHANNEL_CB(channel) \
-    void emberIotChannelUpdateCH ## channel (const EmberIotProp &prop); \
-    struct AutoRegisterCH ## channel { \
-    AutoRegisterCH ## channel() { EmberIotChannels::addCallback(channel, emberIotChannelUpdateCH ## channel); } \
-    } autoRegisterCH ## channel; \
-    void emberIotChannelUpdateCH ## channel (const EmberIotProp &prop)
 
 // #define EMBER_STORAGE_USE_MEMORY
 // #define EMBER_STORAGE_USE_LITTLEFS
@@ -43,55 +39,10 @@
 #include <EmberIotHttp.h>
 #include <EmberIotShared.h>
 #include <EmberIotUtil.h>
-#include <EmberIotUtil.h>
-
-class EmberIotProp
-{
-public:
-    explicit EmberIotProp(const char* data, const bool hasChanged) : hasChanged(hasChanged), data(data)
-    {
-    }
-
-    int toInt() const
-    {
-        return data != nullptr ? atoi(data) : 0;
-    }
-
-    long toLong() const
-    {
-        return data != nullptr ? atol(data) : 0l;
-    }
-
-    long long toLongLong() const
-    {
-        return data != nullptr ? atoll(data) : 0ll;
-    }
-
-    double toDouble() const
-    {
-        return data != nullptr ? atof(data) : 0.0;
-    }
-
-    const char* toString() const
-    {
-        return this->data;
-    }
-
-    /**
-     * True if the value itself has changed from the last emitted value.
-     */
-    const bool hasChanged;
-
-private:
-    const char* data;
-};
-
-typedef void (*EmberIotUpdateCallback)(const EmberIotProp& p);
 
 namespace EmberIotChannels
 {
     bool started = false;
-    EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
     bool firstCallbackDone = false;
     char boardId[EMBER_BOARD_ID_SIZE] = "0";
     bool reconnectedFlag = false;
@@ -140,18 +91,24 @@ namespace EmberIotChannels
 
         for (uint8_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
         {
-            const EmberIotUpdateCallback cb = callbacks[i];
-            if (cb == nullptr)
-            {
-                HTTP_LOGF("Channel %d has no callback, skipping.\n", i);
-                continue;
-            }
-
             int found = HTTP_UTIL::findFirstSkipWhitespace(stream, channelPointers, EMBER_CHANNEL_COUNT);
             if (found == -1)
             {
                 HTTP_LOGN("No channels left, stopping.");
                 return;
+            }
+
+            if (found >= EMBER_CHANNEL_COUNT)
+            {
+                HTTP_LOGN("Invalid channel number.");
+                continue;
+            }
+
+            EmberIotUpdateCallback cb = callbacks[found];
+            if (cb == nullptr)
+            {
+                HTTP_LOGF("Channel %d has no callback, skipping.\n", found);
+                continue;
             }
 
             char w[EMBER_BOARD_ID_SIZE]{};
@@ -173,7 +130,7 @@ namespace EmberIotChannels
                 }
                 else
                 {
-                    HTTP_LOGF("No data found for prop %d\n", i);
+                    HTTP_LOGF("No data found for prop %d\n", found);
                     break;
                 }
             }
@@ -184,7 +141,7 @@ namespace EmberIotChannels
                 continue;
             }
 
-            callChannelUpdate(i, d, w);
+            callChannelUpdate(found, d, w);
         }
     }
 
@@ -266,11 +223,6 @@ namespace EmberIotChannels
 
         firstCallbackDone = true;
         reconnectedFlag = false;
-    }
-
-    inline void addCallback(uint8_t channel, EmberIotUpdateCallback cb)
-    {
-        callbacks[channel] = cb;
     }
 }
 

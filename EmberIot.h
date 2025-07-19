@@ -57,7 +57,6 @@ public:
 
         for (size_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
         {
-            EmberIotChannels::callbacks[i] = nullptr;
             hasUpdateByChannel[i] = false;
             updateDataByChannel[i][0] = 0;
         }
