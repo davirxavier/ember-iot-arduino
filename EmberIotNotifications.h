@@ -2,6 +2,7 @@
 #define FIREPROP_NOTIF_H
 
 #include <time.h>
+#include <EmberIot.h>
 #include <EmberIotHttp.h>
 #include <EmberIotCryptUtil.h>
 
@@ -30,9 +31,10 @@ namespace EmberIotNotificationValues
     const char SEND_NOTIF_HOST[] PROGMEM = "fcm.googleapis.com";
 
     const char SEND_NOTIF_BODY_TOPIC_1[] PROGMEM = R"({"message":{"topic":")";
-    const char SEND_NOTIF_BODY_TITLE_2[] PROGMEM = R"(","notification":{"title":")";
+    const char SEND_NOTIF_BODY_TITLE_2[] PROGMEM = R"(","data":{"title":")";
     const char SEND_NOTIF_BODY_TEXT_3[] PROGMEM = R"(","body":")";
-    const char SEND_NOTIF_BODY_END[] PROGMEM = R"("},"android":{"priority":"high"}}})";
+    const char SEND_NOTIF_BODY_DEVID_4[] PROGMEM = R"(","deviceId":")";
+    const char SEND_NOTIF_BODY_END[] PROGMEM = R"("}}})";
 
     const char GRANT_STR[] PROGMEM = R"({"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":")";
     const uint16_t GRANT_STR_SIZE = strlen_P(GRANT_STR);
@@ -86,7 +88,9 @@ public:
         clientPtr(nullptr),
         currentNotification(0),
         notificationQueue{},
-        initCalled(false)
+        initCalled(false),
+        deviceId(nullptr),
+        deviceName(nullptr)
     {
 #ifdef EMBER_STORAGE_USE_LITTLEFS
         size_t fileSize = strlen(littleFsTempTokenLocation);
@@ -111,6 +115,37 @@ public:
     void init(const char *userUid)
     {
         doInit(userUid, nullptr);
+    }
+
+    /**
+     * Sets additional info for this device to send in the notification.
+     * @param deviceId Id string for this device, if this is specified, the user will be redirected directly to the
+     * device screen when clicking in the notification (as well as for other things on the app). Can be null.
+     * @param deviceName The name that will appear on the notification text, to identify this device to the user.
+     */
+    void setAdditionalDeviceInfo(const char *deviceId, const char *deviceName)
+    {
+        if (deviceId != nullptr)
+        {
+            if (this->deviceId != nullptr)
+            {
+                delete this->deviceId;
+            }
+
+            this->deviceId = new char[strlen(deviceId)+1];
+            strcpy(this->deviceId, deviceId);
+        }
+
+        if (deviceName != nullptr)
+        {
+            if (this->deviceName != nullptr)
+            {
+                delete this->deviceName;
+            }
+
+            this->deviceName = new char[strlen(deviceName)+1];
+            strcpy(this->deviceName, deviceName);
+        }
     }
 
     /**
@@ -309,6 +344,9 @@ private:
         size_t contentLength = strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TOPIC_1) +
             strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TITLE_2) +
             strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TEXT_3) +
+            (deviceId != nullptr ? strlen(deviceId) : 0) +
+            (deviceId != nullptr ? strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_DEVID_4) : 0) +
+            (deviceName != nullptr ? strlen(deviceName) + 3 : 0) +
             strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_END) +
             strlen(userUid) +
             strlen(notif.text) +
@@ -346,10 +384,24 @@ private:
         EMBER_DEBUGN("Body: ");
         HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_TOPIC_1), client);
         HTTP_PRINT_BOTH(userUid, client);
+
         HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_TITLE_2), client);
+        if (deviceName != nullptr)
+        {
+            HTTP_PRINT_BOTH(deviceName, client);
+            HTTP_PRINT_BOTH(" - ", client);
+        }
         HTTP_PRINT_BOTH(notif.title, client);
+
         HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_TEXT_3), client);
         HTTP_PRINT_BOTH(notif.text, client);
+
+        if (deviceId != nullptr)
+        {
+            HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_DEVID_4), client);
+            HTTP_PRINT_BOTH(deviceId, client);
+        }
+
         HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_END), client);
         EMBER_DEBUGN();
 
@@ -578,6 +630,9 @@ private:
 
     uint8_t currentNotification;
     EmberIotNotification notificationQueue[EMBER_NOTIFICATION_QUEUE_SIZE];
+
+    char *deviceId;
+    char *deviceName;
 };
 
 #endif
