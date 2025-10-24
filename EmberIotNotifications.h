@@ -34,6 +34,9 @@ namespace EmberIotNotificationValues
     const char SEND_NOTIF_BODY_TITLE_2[] PROGMEM = R"(","data":{"title":")";
     const char SEND_NOTIF_BODY_TEXT_3[] PROGMEM = R"(","body":")";
     const char SEND_NOTIF_BODY_DEVID_4[] PROGMEM = R"(","deviceId":")";
+    const char SEND_NOTIF_BODY_SOUND_5[] PROGMEM = R"(","soundId":")";
+    const char SEND_NOTIF_BODY_SOUND_DURATION_6[] PROGMEM = R"(","soundDurationSeconds":")";
+    const char SEND_NOTIF_BODY_SOUND_LOOP_7[] PROGMEM = R"(","soundLoop":")";
     const char SEND_NOTIF_BODY_END[] PROGMEM = R"("}}})";
 
     const char GRANT_STR[] PROGMEM = R"({"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":")";
@@ -47,6 +50,9 @@ struct EmberIotNotification
 {
     char title[EMBER_NOTIFICATION_MAX_TITLE_SIZE];
     char text[EMBER_NOTIFICATION_MAX_TEXT_SIZE];
+    int soundId = 0;
+    uint16_t soundDurationSeconds = 60;
+    bool soundLoop = false;
 };
 
 enum EmberSendNotificationStatus
@@ -214,9 +220,17 @@ public:
      *
      * @param title Notification title. Max size of EMBER_NOTIFICATION_MAX_TITLE_SIZE.
      * @param text Notification text. Max size of EMBER_NOTIFICATION_MAX_TEXT_SIZE.
+     * @param soundId
+     * @param soundDurationSeconds
+     * @param loopSound
      * @return See the EmberSendNotificationStatus enum for cases.
      */
-    EmberSendNotificationStatus send(const char *title, const char *text)
+    EmberSendNotificationStatus send(
+        const char *title,
+        const char *text,
+        const int soundId = -1,
+        const uint16_t soundDurationSeconds = 60,
+        const bool loopSound = false)
     {
         if (currentNotification >= EMBER_NOTIFICATION_QUEUE_SIZE)
         {
@@ -238,6 +252,11 @@ public:
 
         strcpy(notificationQueue[currentNotification].title, title);
         strcpy(notificationQueue[currentNotification].text, text);
+
+        notificationQueue[currentNotification].soundId = soundId;
+        notificationQueue[currentNotification].soundDurationSeconds = soundDurationSeconds;
+        notificationQueue[currentNotification].soundLoop = loopSound;
+
         currentNotification++;
         return EMBER_NOTIF_QUEUED;
     }
@@ -341,12 +360,24 @@ private:
 
         EmberIotNotification notif = notificationQueue[currentNotification-1];
 
+        size_t soundSettingsSize = 0;
+        if (notif.soundId >= 0)
+        {
+            soundSettingsSize = strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_SOUND_5) +
+                strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_SOUND_DURATION_6) +
+                strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_SOUND_LOOP_7) +
+                snprintf(nullptr, 0, "%d", notif.soundId) +
+                snprintf(nullptr, 0, "%d", notif.soundDurationSeconds) +
+                (notif.soundLoop ? 4 : 5); // true = 4; false = 5
+        }
+
         size_t contentLength = strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TOPIC_1) +
             strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TITLE_2) +
             strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_TEXT_3) +
             (deviceId != nullptr ? strlen(deviceId) : 0) +
             (deviceId != nullptr ? strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_DEVID_4) : 0) +
             (deviceName != nullptr ? strlen(deviceName) + 3 : 0) +
+            soundSettingsSize +
             strlen_P(EmberIotNotificationValues::SEND_NOTIF_BODY_END) +
             strlen(userUid) +
             strlen(notif.text) +
@@ -400,6 +431,18 @@ private:
         {
             HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_DEVID_4), client);
             HTTP_PRINT_BOTH(deviceId, client);
+        }
+
+        if (notif.soundId >= 0)
+        {
+            HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_SOUND_5), client);
+            HTTP_PRINT_BOTH(notif.soundId, client);
+
+            HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_SOUND_DURATION_6), client);
+            HTTP_PRINT_BOTH(notif.soundDurationSeconds, client);
+
+            HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_SOUND_LOOP_7), client);
+            HTTP_PRINT_BOTH(notif.soundLoop ? "true" : "false", client);
         }
 
         HTTP_PRINT_BOTH(FPSTR(EmberIotNotificationValues::SEND_NOTIF_BODY_END), client);
