@@ -5,6 +5,10 @@
 * This file contains a unified version of BearSSL RSA code
 * originally written by Thomas Pornin (https://bearssl.org/).
 *
+* Modifications:
+* - Unified all RSA code in one file for ease of inclusion in embedded systems.
+* - Put everything inside the EmberIotRSA namespace, for separation with default embedded libraries.
+*
 * BearSSL is licensed under the MIT License:
 *
 * Permission is hereby granted, free of charge, to any person obtaining
