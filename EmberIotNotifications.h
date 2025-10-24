@@ -216,13 +216,16 @@ public:
     }
 
     /**
-     * Send a notification using the FCM service. This function is not synchronous, it will add the notification to a send queue.
+     * Send a notification using the FCM service. This function is not synchronous, it will add the notification to a queue and send it after.
+     * If the queue is full the notification will not be sent and will return EMBER_NOTIF_QUEUE_FULL. The queue size is defined by the
+     * macro EMBER_NOTIFICATION_QUEUE_SIZE.
      *
      * @param title Notification title. Max size of EMBER_NOTIFICATION_MAX_TITLE_SIZE.
      * @param text Notification text. Max size of EMBER_NOTIFICATION_MAX_TEXT_SIZE.
-     * @param soundId
-     * @param soundDurationSeconds
-     * @param loopSound
+     * @param soundId Id for a custom sound when the notification arrives, useful for setting sound alarms. Check the app docs for valid ids,
+     * however, they start at 0 and increase one by one. If negative, no sound will play.
+     * @param soundDurationSeconds Duration in seconds for the sound to play.
+     * @param loopSound True if the sound effect should be looped for the whole duration, false if it should stop after completing once.
      * @return See the EmberSendNotificationStatus enum for cases.
      */
     EmberSendNotificationStatus send(
