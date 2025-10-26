@@ -1,153 +1,257 @@
-//
-// Created by xav on 3/28/25.
-//
+/******************************************************************************
+* Project Name: EmberIoT
+*
+* Ember IoT is a simple proof of concept for a Firebase-hosted IoT
+* cloud designed to work with Arduino-based devices and an Android mobile app.
+* It enables microcontrollers to connect to the cloud, sync data,
+* and interact with a mobile interface using Firebase Authentication and
+* Firebase Realtime Database services. This project simplifies creating IoT
+* infrastructure without the need for a dedicated server.
+*
+* Copyright (c) 2025 davirxavier
+*
+* MIT License
+*
+* Permission is hereby granted, free of charge, to any person obtaining a copy
+* of this software and associated documentation files (the "Software"), to deal
+* in the Software without restriction, including without limitation the rights
+* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+* copies of the Software, and to permit persons to whom the Software is
+* furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in all
+* copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+* SOFTWARE.
+*****************************************************************************/
 
 #ifndef EMBERSHARED_H
 #define EMBERSHARED_H
 
+#include <EmberChannelDefinition.h>
+
 #ifndef EMBER_CHANNEL_COUNT
 #error "Max channel count not defined, please define the channel count before importing this file like so: #define EMBER_CHANNEL_COUNT 5"
-#error "It doesn't need to be the exact channel number, but it should be equal or more than the number of channels you will use."
+#error "It doesn't need to be the exact channel number, but it should be equal or more than the number of channels you will use. Each channel will use ~50 bytes of heap."
+#endif
+
+#define EMBER_MAX_CHANNEL_COUNT 99
+#if EMBER_CHANNEL_COUNT > EMBER_MAX_CHANNEL_COUNT
+#error "Only 99 channels are supported."
 #endif
 
 #ifndef EMBER_MAXIMUM_STRING_SIZE
-#define EMBER_MAXIMUM_STRING_SIZE 32
+#define EMBER_MAXIMUM_STRING_SIZE 33
 #endif
 
-#define EMBER_CHANNEL_CB(channel) \
-    void emberIotChannelUpdateCH ## channel (const EmberIotProp &prop); \
-    struct AutoRegisterCH ## channel { \
-    AutoRegisterCH ## channel() { EmberIotChannels::addCallback(channel, emberIotChannelUpdateCH ## channel); } \
-    } autoRegisterCH ## channel; \
-    void emberIotChannelUpdateCH ## channel (const EmberIotProp &prop)
+#define EMBER_BOARD_ID_SIZE 8
+
+// #define EMBER_STORAGE_USE_MEMORY
+// #define EMBER_STORAGE_USE_LITTLEFS
+
+#ifndef EMBER_STORAGE_USE_MEMORY
+#ifndef EMBER_STORAGE_USE_LITTLEFS
+#ifdef ESP32
+#define EMBER_STORAGE_USE_MEMORY
+#elif ESP8266
+#define EMBER_STORAGE_USE_LITTLEFS
+#endif
+#endif
+#endif
 
 #include <EmberIotHttp.h>
+#include <EmberIotShared.h>
 #include <EmberIotUtil.h>
-
-class EmberIotProp
-{
-public:
-    explicit EmberIotProp(const char* data, const bool hasChanged) : data(data), hasChanged(hasChanged)
-    {
-    }
-
-    int toInt() const
-    {
-        return data != nullptr ? atoi(data) : 0;
-    }
-
-    long toLong() const
-    {
-        return data != nullptr ? atol(data) : 0l;
-    }
-
-    long long toLongLong() const
-    {
-        return data != nullptr ? atoll(data) : 0ll;
-    }
-
-    double toDouble() const
-    {
-        return data != nullptr ? atof(data) : 0.0;
-    }
-
-    const char* toString() const
-    {
-        return this->data;
-    }
-
-    /**
-     * True if the value itself has changed from the last emitted value.
-     */
-    const bool hasChanged;
-private:
-    const char* data;
-};
-
-typedef void (*EmberIotUpdateCallback)(const EmberIotProp& p);
 
 namespace EmberIotChannels
 {
     bool started = false;
-    EmberIotUpdateCallback callbacks[EMBER_CHANNEL_COUNT]{};
     bool firstCallbackDone = false;
-    char boardId[8] = "0";
+    char boardId[EMBER_BOARD_ID_SIZE] = "0";
     bool reconnectedFlag = false;
     uint32_t lastValueHashes[EMBER_CHANNEL_COUNT]{};
 
-    inline void streamCallback(const char* data)
+    inline void callChannelUpdate(uint8_t c, const char* d, const char* w)
+    {
+        HTTP_LOGF("Found d and w for channel %d: %s, %s\n", c, d, w);
+        if (w != nullptr && strcmp(w, boardId) == 0 && firstCallbackDone)
+        {
+            HTTP_LOGF("Event for channel %d was self-made, ignoring.\n", c);
+            return;
+        }
+
+        uint32_t currentHash = FirePropUtil::fnv1aHash(d);
+        bool hasChanged = currentHash != lastValueHashes[c];
+        if (reconnectedFlag)
+        {
+            HTTP_LOGF("Checking hashes for channel %d\n", c);
+            if (!hasChanged)
+            {
+                HTTP_LOGN("Data hashes are equal, ignoring event.");
+                return;
+            }
+        }
+
+        HTTP_LOGF("Calling update event for channel %d with data: %s\n", c, d);
+        lastValueHashes[c] = FirePropUtil::fnv1aHash(d);
+        EmberIotProp prop(d, hasChanged);
+        callbacks[c](prop);
+        HTTP_LOGN("Callback done.");
+    }
+
+    inline void handleBatchChannelUpdate(Stream& stream)
+    {
+        HTTP_LOGN("Is batch update event.");
+        char channels[EMBER_CHANNEL_COUNT][8];
+        const char* channelPointers[EMBER_CHANNEL_COUNT];
+        for (uint8_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
+        {
+            snprintf(channels[i], sizeof(channels[i]), R"(CH%d":)", i);
+            channelPointers[i] = channels[i];
+        }
+
+        const char* channelSearch[] = {R"("d":")", R"("w":")", "}"};
+
+        for (uint8_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
+        {
+            int found = HTTP_UTIL::findFirstSkipWhitespace(stream, channelPointers, EMBER_CHANNEL_COUNT);
+            if (found == -1)
+            {
+                HTTP_LOGN("No channels left, stopping.");
+                return;
+            }
+
+            if (found >= EMBER_CHANNEL_COUNT)
+            {
+                HTTP_LOGN("Invalid channel number.");
+                continue;
+            }
+
+            EmberIotUpdateCallback cb = callbacks[found];
+            if (cb == nullptr)
+            {
+                HTTP_LOGF("Channel %d has no callback, skipping.\n", found);
+                continue;
+            }
+
+            char w[EMBER_BOARD_ID_SIZE]{};
+            char d[EMBER_MAXIMUM_STRING_SIZE]{};
+            bool dataFound = false;
+            for (uint8_t j = 0; j < 2; j++)
+            {
+                int foundProperty = HTTP_UTIL::findFirstSkipWhitespace(stream, channelSearch, 3);
+                if (foundProperty == 0)
+                {
+                    size_t read = stream.readBytesUntil('"', d, EMBER_MAXIMUM_STRING_SIZE - 1);
+                    d[read < EMBER_MAXIMUM_STRING_SIZE - 1 ? read : EMBER_MAXIMUM_STRING_SIZE - 1] = 0;
+                    dataFound = true;
+                }
+                else if (foundProperty == 1)
+                {
+                    size_t read = stream.readBytesUntil('"', w, sizeof(w) - 1);
+                    w[read < sizeof(w) - 1 ? read : sizeof(w) - 1] = 0;
+                }
+                else
+                {
+                    HTTP_LOGF("No data found for prop %d\n", found);
+                    break;
+                }
+            }
+
+            if (!dataFound)
+            {
+                HTTP_LOGN("Data not found for channel, skipping.");
+                continue;
+            }
+
+            callChannelUpdate(found, d, w);
+        }
+    }
+
+    inline void handleSingleChannelUpdate(Stream &stream)
+    {
+        char chStr[8];
+        size_t readChStr = stream.readBytesUntil('"', chStr, sizeof(chStr) - 1);
+        chStr[readChStr < sizeof(chStr) - 1 ? readChStr : sizeof(chStr) - 1] = 0;
+
+        char* lastSlash = strrchr(chStr, '/');
+        if (lastSlash != nullptr)
+        {
+            lastSlash[0] = 0;
+        }
+
+        HTTP_LOGF("Single channel update, chStr: C%s\n", chStr);
+        int channel = -1;
+        FirePropUtil::str2int_errno result = FirePropUtil::str2int(&channel, chStr + 1, 10);
+        if (result != FirePropUtil::STR2INT_SUCCESS || channel < 0)
+        {
+            HTTP_LOGF("Error parsing channel number: %s / %d\n", chStr, result);
+            return;
+        }
+
+        if (channel >= EMBER_CHANNEL_COUNT)
+        {
+            HTTP_LOGF("Channel %d is invalid, skipping.\n", channel);
+            return;
+        }
+
+        bool foundData = HTTP_UTIL::findSkipWhitespace(stream, R"("data":")");
+        if (!foundData)
+        {
+            HTTP_LOGF("Data not found in channel update event for channel %d\n.", channel);
+            return;
+        }
+
+        char data[EMBER_MAXIMUM_STRING_SIZE];
+        size_t readData = stream.readBytesUntil('"', data, EMBER_MAXIMUM_STRING_SIZE - 1);
+        data[readData < EMBER_MAXIMUM_STRING_SIZE - 1 ? readData : EMBER_MAXIMUM_STRING_SIZE - 1] = 0;
+
+        HTTP_LOGF("Single channel update data: %s\n", data);
+        callChannelUpdate(channel, data, "");
+    }
+
+    inline void streamCallback(Stream& stream)
     {
         if (!started)
         {
             return;
         }
 
-        HTTP_LOGF("Received data event: %s\n", data);
+        HTTP_LOGN("Received data event.");
 
-        JsonDocument doc;
-        deserializeJson(doc, data);
-
-        for (size_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
+        if (stream.available() == 0)
         {
-            const EmberIotUpdateCallback cb = callbacks[i];
-            if (cb == nullptr)
-            {
-                continue;
-            }
+            HTTP_LOGN("No data to read.");
+            return;
+        }
 
-            char name[8];
-            sprintf(name, "/CH%d", i);
+        bool foundPath = HTTP_UTIL::findSkipWhitespace(stream, R"("path":"/)");
+        if (!foundPath)
+        {
+            HTTP_LOGN("Path not found for stream data update, ignoring.");
+            return;
+        }
 
-            const char* path = doc["path"];
-            if (strcmp("/", path) == 0)
-            {
-                sprintf(name, "CH%d", i);
-
-                JsonDocument dataDoc = doc["data"];
-
-                if (!dataDoc[name].is<JsonVariant>())
-                {
-                    continue;
-                }
-
-                if (dataDoc[name]["w"].is<JsonVariant>() && firstCallbackDone)
-                {
-                    const char *who = dataDoc[name]["w"].as<const char*>();
-                    if (strcmp(who, boardId) == 0)
-                    {
-                        HTTP_LOGN("Event was self-made, ignoring.");
-                        continue;
-                    }
-                }
-
-                const char *dataStr = dataDoc[name]["d"].as<const char*>();
-
-                uint32_t currentHash = FirePropUtil::fnv1aHash(dataStr);
-                bool hasChanged = currentHash != lastValueHashes[i];
-
-                if (reconnectedFlag)
-                {
-                    HTTP_LOGF("Checking hashes for channel %d\n", i);
-                    if (!hasChanged)
-                    {
-                        HTTP_LOGN("Data hashes are equal, ignoring event.");
-                        continue;
-                    }
-                }
-
-                lastValueHashes[i] = FirePropUtil::fnv1aHash(dataStr);
-                EmberIotProp prop(dataStr, hasChanged);
-                cb(prop);
-            }
+        char nextPathChar = stream.read();
+        // Format: ","data":{"CH0":{"d":"0","w":"app"},"CH1":{"d":"251908","w":"0"},"CH3":{"d":"27.0","w":"app"}}}
+        if (nextPathChar == '"')
+        {
+            handleBatchChannelUpdate(stream);
+        }
+        // Format: CH1/d","data":"251907"}
+        else if (nextPathChar == 'C')
+        {
+            handleSingleChannelUpdate(stream);
         }
 
         firstCallbackDone = true;
         reconnectedFlag = false;
-    }
-
-    inline void addCallback(uint8_t channel, EmberIotUpdateCallback cb)
-    {
-        callbacks[channel] = cb;
     }
 }
 

@@ -1,6 +1,35 @@
-//
-// Created by xav on 3/28/25.
-//
+/******************************************************************************
+* Project Name: EmberIoT
+*
+* Ember IoT is a simple proof of concept for a Firebase-hosted IoT
+* cloud designed to work with Arduino-based devices and an Android mobile app.
+* It enables microcontrollers to connect to the cloud, sync data,
+* and interact with a mobile interface using Firebase Authentication and
+* Firebase Realtime Database services. This project simplifies creating IoT
+* infrastructure without the need for a dedicated server.
+*
+* Copyright (c) 2025 davirxavier
+*
+* MIT License
+*
+* Permission is hereby granted, free of charge, to any person obtaining a copy
+* of this software and associated documentation files (the "Software"), to deal
+* in the Software without restriction, including without limitation the rights
+* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+* copies of the Software, and to permit persons to whom the Software is
+* furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in all
+* copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+* SOFTWARE.
+*****************************************************************************/
 
 #ifndef FIREPROP_H
 #define FIREPROP_H
@@ -18,40 +47,36 @@
 #define EMBER_BUTTON_ON 1
 #define EMBER_BUTTON_PUSH 2
 
+/**
+ * @param dbUrl Realtime database URL, without protocol and slashes at the end. Example value: my-rtdb.firebaseio.com
+ * @param deviceId Device id string. Should be the device id copied from the android app (by long-pressing on a device)
+ * or any string if you want to use board-to-board communication only.
+ * @param boardId Per device unique identifier for this specific board. You need to use separate numbers for board-to-board
+ * communication, so the library can identify who emitted what data. Use 0 or any positive number if only using with the android app.
+ * @param username Firebase authentication username. The username for the user you created in Firebase Authentication (not the username used to sign in to firebase).
+ * @param password Firebase authentication password. The password for the user you created in Firebase Authentication (not the username used to sign in to firebase).
+ * @param webApiKey Api key for your Firebase project, found under project settings.
+ */
 class EmberIot : WithSecureClient
 {
 public:
-    /**
-     * @param dbUrl Realtime database URL, without protocol and slashes at the end. Example value: my-rtdb.firebaseio.com
-     * @param deviceId Device id string. Should be the device id copied from the android app (by long-pressing on a device)
-     * or any string if you want to use board-to-board communication only.
-     * @param boardId Per device unique identifier for this specific board. You need to use separate numbers for board-to-board
-     * communication, so the library can identify who emitted what data. Use 0 or any positive number if only using with the android app.
-     * @param username Firebase authentication username. The username for the user you created in Firebase Authentication (not the username used to sign in to firebase).
-     * @param password Firebase authentication password. The password for the user you created in Firebase Authentication (not the username used to sign in to firebase).
-     * @param webApiKey Api key for your Firebase project, found under project settings.
-     */
     EmberIot(const char* dbUrl,
              const char* deviceId,
-             const unsigned int& boardId = 0,
-             const char* username = nullptr,
-             const char* password = nullptr,
-             const char* webApiKey = nullptr) : dbUrl(dbUrl)
+             const char* username,
+             const char* password,
+             const char* webApiKey,
+             const unsigned int& boardId = 0) : dbUrl(dbUrl)
     {
         stream = nullptr;
         inited = false;
         isPaused = false;
         path = nullptr;
-        auth = nullptr;
         lastUpdatedChannels = 0;
         lastHeartbeat = -UPDATE_LAST_SEEN_INTERVAL;
         snprintf(EmberIotChannels::boardId, sizeof(EmberIotChannels::boardId), "%d", boardId);
         enableHeartbeat = true;
 
-        if (username != nullptr && password != nullptr && webApiKey != nullptr)
-        {
-            auth = new EmberIotAuth(username, password, webApiKey);
-        }
+        auth = new EmberIotAuth(username, password, webApiKey);
 
         const size_t pathSize = strlen(EMBERIOT_STREAM_PATH) + strlen(deviceId) + strlen(EMBERIOT_PROP_PATH) + 2;
         path = new char[pathSize]{};
@@ -61,7 +86,6 @@ public:
 
         for (size_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
         {
-            EmberIotChannels::callbacks[i] = nullptr;
             hasUpdateByChannel[i] = false;
             updateDataByChannel[i][0] = 0;
         }
@@ -72,14 +96,12 @@ public:
      */
     void init()
     {
+        auth->init(this);
         stream->start();
         inited = true;
         EmberIotChannels::started = true;
         isPaused = false;
-
-#ifdef ESP32
-        configTime(0, 0, "pool.ntp.org");
-#endif
+        FirePropUtil::initTime();
     }
 
     /**
@@ -92,13 +114,18 @@ public:
             return;
         }
 
-        if (auth != nullptr && !auth->ready())
+        if (auth == nullptr || stream == nullptr)
+        {
+            return;
+        }
+
+        if (!auth->ready())
         {
             auth->loop();
             return;
         }
 
-        if (auth != nullptr && auth->isExpired())
+        if (auth->isExpired())
         {
 #ifdef ESP32
             auth->loop();
@@ -109,10 +136,8 @@ public:
 #endif
             return;
         }
-        else if (auth != nullptr)
-        {
-            auth->loop();
-        }
+
+        auth->loop();
 
         if (!stream->isConnected())
         {
@@ -158,30 +183,11 @@ public:
 
         if (updateCount > 0)
         {
-            JsonDocument doc;
-
-            for (uint8_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
-            {
-                if (!hasUpdateByChannel[i])
-                {
-                    continue;
-                }
-
-                char buf[5];
-                sprintf(buf, "CH%d", i);
-                doc[buf]["d"] = updateDataByChannel[i];
-                doc[buf]["w"] = EmberIotChannels::boardId;
-            }
-
-            unsigned int bodySize = measureJson(doc) + 2;
-            char body[bodySize];
-            serializeJson(doc, body, bodySize);
-
 #ifdef ESP32
-            bool result = write(body);
+            bool result = updateChannels();
 #elif ESP8266
             pause();
-            bool result = write(body);
+            bool result = updateChannels();
             resume();
 #endif
             if (result)
@@ -207,6 +213,11 @@ public:
      */
     void channelWrite(uint8_t channel, const char* value)
     {
+        if (!checkChannelChanged(updateDataByChannel[channel], value))
+        {
+            return;
+        }
+
         hasUpdateByChannel[channel] = true;
         strncpy(updateDataByChannel[channel], value, EMBER_MAXIMUM_STRING_SIZE);
         updateDataByChannel[channel][EMBER_MAXIMUM_STRING_SIZE] = 0;
@@ -219,8 +230,9 @@ public:
      */
     void channelWrite(uint8_t channel, int value)
     {
-        hasUpdateByChannel[channel] = true;
-        sprintf(updateDataByChannel[channel], "%d", value);
+        char newValStr[EMBER_MAXIMUM_STRING_SIZE];
+        sprintf(newValStr, "%d", value);
+        channelWrite(channel, newValStr);
     }
 
     /**
@@ -230,8 +242,9 @@ public:
      */
     void channelWrite(uint8_t channel, double value)
     {
-        hasUpdateByChannel[channel] = true;
-        sprintf(updateDataByChannel[channel], "%f", value);
+        char newValStr[EMBER_MAXIMUM_STRING_SIZE];
+        sprintf(newValStr, "%f", value);
+        channelWrite(channel, newValStr);
     }
 
     /**
@@ -241,22 +254,28 @@ public:
      */
     void channelWrite(uint8_t channel, long long value)
     {
-        hasUpdateByChannel[channel] = true;
-        sprintf(updateDataByChannel[channel], "%lld", value);
+        char newValStr[EMBER_MAXIMUM_STRING_SIZE];
+        sprintf(newValStr, "%lld", value);
+        channelWrite(channel, newValStr);
     }
 
     void pause()
     {
         isPaused = true;
         stream->stop();
-        delay(100);
+        delay(50);
     }
 
     void resume()
     {
-        delay(100);
+        delay(50);
         isPaused = false;
         stream->start();
+    }
+
+    const char* getUserUid()
+    {
+        return auth != nullptr && auth->ready() ? auth->getUserUid() : nullptr;
     }
 
     /**
@@ -266,102 +285,217 @@ public:
      */
     bool enableHeartbeat;
 
-private:
-    bool write(const char* data)
+    WiFiClientSecure *getWifiClient()
     {
-        if (auth != nullptr && auth->getUserUid() == nullptr)
+        return &client;
+    }
+
+private:
+    bool checkChannelChanged(const char *lastVal, const char *newVal)
+    {
+        if (lastVal != nullptr && newVal == nullptr)
+        {
+            return true;
+        }
+
+        if (lastVal == nullptr && newVal != nullptr)
+        {
+            return true;
+        }
+
+        if (lastVal == nullptr && newVal == nullptr)
         {
             return false;
         }
 
-        size_t bufSize = EmberIotStreamValues::PROTOCOL_SIZE +
-            strlen(dbUrl) +
-            EmberIotStreamValues::AUTH_PARAM_SIZE +
-            strlen(stream->getPath()) +
-            (auth != nullptr ? auth->getTokenSize() : 0) + 8;
+        return strcmp(lastVal, newVal) != 0;
+    }
 
-        size_t pathSize = strlen(stream->getPath());
-        char finalPath[pathSize + 1];
-        if (FirePropUtil::endsWith(stream->getPath(), ".json"))
+    bool updateChannels()
+    {
+        if (auth != nullptr && auth->getUserUid() == nullptr)
         {
-            strcpy(finalPath, stream->getPath());
-            finalPath[pathSize - 5] = 0;
+            HTTP_LOGN("Auth is defined but uid is not yet defined, aborting.");
+            return false;
         }
 
-        char buf[bufSize];
-        sprintf_P(buf, PSTR("%S%s%s.json%S%s&print=silent"),
-                EmberIotStreamValues::PROTOCOL,
-                dbUrl,
-                finalPath,
-                EmberIotStreamValues::AUTH_PARAM,
-                auth != nullptr ? auth->getToken() : "");
+        EMBER_PRINT_MEM("Memory before channel update");
+        HTTP_LOGN("Sending channel update.");
 
-        HTTP_LOGF("Setting properties in path: %s, body:\n%s\n", buf, data);
+        if (!HTTP_UTIL::connectToHost(dbUrl, client))
+        {
+            return false;
+        }
 
-        return HTTP_UTIL::doJsonHttpRequest(client,
-                                            buf,
-                                            dbUrl,
-                                            FPSTR(HTTP_UTIL::METHOD_PATCH),
-                                            data);
+        size_t toUpdateCount = 0;
+        size_t toUpdate[EMBER_CHANNEL_COUNT];
+        for (size_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
+        {
+            if (hasUpdateByChannel[i])
+            {
+                toUpdate[toUpdateCount] = i;
+                toUpdateCount++;
+            }
+        }
+
+        HTTP_UTIL::printHttpMethod(FPSTR(HTTP_UTIL::METHOD_PATCH), client);
+
+        HTTP_PRINT_BOTH_2(stream->getPath());
+        if (!FirePropUtil::endsWith(stream->getPath(), ".json"))
+        {
+            HTTP_PRINT_BOTH_2(F(".json"));
+        }
+
+        if (auth != nullptr)
+        {
+            HTTP_PRINT_BOTH_2(EmberIotStreamValues::AUTH_PARAM);
+            auth->writeToken(client);
+            HTTP_PRINT_BOTH_2(F("&print=silent"));
+        }
+        else
+        {
+            HTTP_PRINT_BOTH_2(F("?print=silent"));
+        }
+        HTTP_UTIL::printHttpVer(client);
+
+        HTTP_UTIL::printHost(dbUrl, client);
+        HTTP_UTIL::printContentType(client);
+
+        // 2 = {} (body brackets)
+        // -1 = , (last one has no comma at end)
+        size_t contentLength = 1;
+        for (size_t i = 0; i < toUpdateCount; i++)
+        {
+            char *data = updateDataByChannel[toUpdate[i]];
+
+            // 3 = "CH
+            // 8 = ":{"d":"
+            // 8 = ", "w":"
+            // 2 = "}
+            // 1 = ,
+            // "CHx":{"d":"", "w":""},
+            contentLength += 22 + snprintf(nullptr, 0, "%d", toUpdate[i]) + strlen(data) + strlen(EmberIotChannels::boardId);
+        }
+        HTTP_UTIL::printContentLengthAndEndHeaders(contentLength, client);
+
+        HTTP_PRINT_BOTH_2("{");
+        for (size_t i = 0; i < toUpdateCount; i++)
+        {
+            char *data = updateDataByChannel[toUpdate[i]];
+            if (data == nullptr)
+            {
+                HTTP_LOGF("Error reading channels to update, index %d is nullptr.\n", i);
+                client.stop();
+                return false;
+            }
+
+            // {"CHx":{"d":"data","w":"boardId"}}
+            HTTP_PRINT_BOTH_2(R"("CH)");
+            HTTP_PRINT_BOTH_2(toUpdate[i]);
+            HTTP_PRINT_BOTH_2(R"(":{"d":")");
+            HTTP_PRINT_BOTH_2(data);
+            HTTP_PRINT_BOTH_2(R"(", "w":")");
+            HTTP_PRINT_BOTH_2(EmberIotChannels::boardId);
+            HTTP_PRINT_BOTH_2(R"("})");
+
+            if (i < toUpdateCount-1)
+            {
+                HTTP_PRINT_BOTH_2(",");
+            }
+        }
+        HTTP_PRINT_BOTH_2("}");
+        EMBER_DEBUGN();
+
+        EMBER_PRINT_MEM("Memory waiting channel update response");
+
+        int responseStatus = HTTP_UTIL::getStatusCode(client);
+        client.stop();
+        if (!HTTP_UTIL::isSuccess(responseStatus))
+        {
+            HTTP_LOGF("Error while setting property: %d\n", responseStatus);
+            return false;
+        }
+        return true;
     }
 
     bool writeLastSeen()
     {
         if (auth != nullptr && auth->getUserUid() == nullptr)
         {
+            HTTP_LOGN("Auth is defined but uid is not yet defined, aborting.");
             return false;
         }
 
-        size_t bufSize = EmberIotStreamValues::PROTOCOL_SIZE +
-            strlen(dbUrl) +
-            EmberIotStreamValues::AUTH_PARAM_SIZE +
-            strlen(stream->getPath()) +
-            (auth != nullptr ? auth->getTokenSize() : 0) + 8;
+        EMBER_PRINT_MEM("Memory before last seen update");
 
-        size_t pathSize = strlen(stream->getPath());
-        char finalPath[pathSize + EmberIotStreamValues::LAST_SEEN_PATH_SIZE + 1];
-        finalPath[0] = 0;
-
-        char* lastSlash = strrchr(stream->getPath(), '/');
-        if (lastSlash != nullptr)
+        if (!HTTP_UTIL::connectToHost(dbUrl, client))
         {
-            size_t index = lastSlash - stream->getPath();
-            strcpy(finalPath, stream->getPath());
-            finalPath[index] = 0;
-        }
-        else
-        {
-            strcpy(finalPath, stream->getPath());
+            HTTP_LOGN("Couldn't connect.");
+            return false;
         }
 
-        char buf[bufSize];
-        sprintf_P(buf, PSTR("%S%s%s.json%S%s&print=silent"),
-                EmberIotStreamValues::PROTOCOL,
-                dbUrl,
-                finalPath,
-                EmberIotStreamValues::AUTH_PARAM,
-                auth != nullptr ? auth->getToken() : "");
+        char *pathLastSlash = strrchr(stream->getPath(), '/');
+        size_t pathLastSlashIndex = strlen(stream->getPath());
+        if (pathLastSlash != nullptr)
+        {
+            pathLastSlashIndex = pathLastSlash - stream->getPath();
+        }
 
         time_t now;
-        tm timeinfo;
-        getLocalTime(&timeinfo);
         time(&now);
 
 #ifdef ESP32
-        char bodyBuf[snprintf(NULL, 0, "%ld", now) + 16];
-        sprintf(bodyBuf, "{\"%s\":%ld}", EmberIotStreamValues::LAST_SEEN_PATH, now);
+        HTTP_LOGF("Setting last_seen to %ld.\n", now);
 #elif ESP8266
-        char bodyBuf[snprintf(NULL, 0, "%lld", now) + 16];
-        sprintf_P(bodyBuf, PSTR("{\"%S\":%lld}"), EmberIotStreamValues::LAST_SEEN_PATH, now);
+        HTTP_LOGF("Setting last_seen to %lld.\n", now);
 #endif
 
-        HTTP_LOGF("Setting last_seen in path: %s, body:\n%s\n", buf, bodyBuf);
+        HTTP_UTIL::printHttpMethod(FPSTR(HTTP_UTIL::METHOD_PATCH), client);
+        client.write((uint8_t*) stream->getPath(), pathLastSlashIndex);
+        client.print(".json");
 
-        return HTTP_UTIL::doJsonHttpRequest(client,
-                                            buf,
-                                            dbUrl,
-                                            FPSTR(HTTP_UTIL::METHOD_PATCH),
-                                            bodyBuf);
+        if (auth != nullptr)
+        {
+            client.print("?auth=");
+            auth->writeToken(client);
+            client.print(F("&print=silent"));
+        }
+        else
+        {
+            client.print(F("?print=silent"));
+        }
+        HTTP_UTIL::printHttpVer(client);
+
+        HTTP_UTIL::printHost(dbUrl, client);
+        HTTP_UTIL::printContentType(client);
+
+#ifdef ESP32
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+        size_t length = snprintf(NULL, 0, "%lld", now);
+#else
+        size_t length = snprintf(NULL, 0, "%ld", now);
+#endif
+#elif ESP8266
+        size_t length = snprintf(NULL, 0, "%lld", now);
+#endif
+
+        HTTP_UTIL::printContentLengthAndEndHeaders(strlen(EmberIotStreamValues::LAST_SEEN_BODY) + length + 1, client);
+
+        client.print(FPSTR(EmberIotStreamValues::LAST_SEEN_BODY));
+        client.print(now);
+        client.print("}");
+
+        EMBER_PRINT_MEM("Memory waiting last seen update response");
+
+        int responseStatus = HTTP_UTIL::getStatusCode(client);
+        client.stop();
+        if (!HTTP_UTIL::isSuccess(responseStatus))
+        {
+            HTTP_LOGF("Error while trying to set last seen: %d\n", responseStatus);
+            return false;
+        }
+
+        return true;
     }
 
     bool inited;
