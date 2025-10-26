@@ -217,6 +217,11 @@ public:
         lastUpdatedChannels = millis();
     }
 
+    EmberIotProp getChannelLastValue(const int channel)
+    {
+        return EmberIotProp(EmberIotChannels::lastValues[channel], false);
+    }
+
     /**
      * Sets a callback to be executed when a scheduled action runs.
      * @param scheduleId schedule id.
