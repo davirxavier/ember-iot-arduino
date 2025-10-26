@@ -196,7 +196,88 @@ This function must be called in the `loop()` of the Arduino program. It continuo
 
 #### `ember.channelWrite(channel, value)`
 This function sends data to a specific channel in the Firebase Realtime Database. The first argument, `channel`, is the channel number (e.g., `EMBER_BUTTON_OFF`), and the second argument, `value`, is the data being sent. In the example, it's used to update the channel with the button status (e.g., turning the button OFF).
+
+### FCM Notifications
+
+The EmberIoT library also supports **Firebase Cloud Messaging (FCM)** for sending push notifications directly from your microcontroller to registered users or devices.  
+This allows your IoT device to send alerts, status updates, or messages to your mobile app or other connected devices through Firebase.
+
+To learn how to configure your Firebase project and service account, refer to the [Firebase project setup tutorial](FIREBASE_SETUP.md).
+
+#### Example: Sending a Simple Notification
+
+````C++
+#include <Arduino.h>
+#include <EmberIotNotifications.h>
+
+// Your Firebase service account email (created during setup)
+const char accountEmail[] = "fcmserviceacc@myfirebaseproject.gserviceaccount.com";
+
+// The private key associated with the service account
+const char privateKey[] = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n";
+
+// The unique Firebase Authentication User UID that will receive the notification
+const char userUid[] = "MNvs5SUXkRda1sSYA6bjvKAPpvR2";
+
+// Create an FCMEmberNotifications instance
+FCMEmberNotifications notifications(accountEmail, privateKey);
+
+void setup() 
+{
+    // Initialize the notifications instance with the recipient user UID
+    notifications.init(userUid);
     
+    // (Optional) Set additional information for this device.
+    // The first argument is the EmberIot Device ID — this lets the app know which device sent the notification.
+    // The second argument is a title prefix for all notifications from this device.
+    notifications.setAdditionalDeviceInfo("-ORcOt-eYeGOW8mi4XqK", "My Device");
+    
+    // Send a notification with a title and body message
+    notifications.send("Test", "Hello World!");
+}
+
+void loop() 
+{
+    // Maintain the notification service connection and handle background tasks
+    notifications.loop();
+}
+````
+
+Below is a brief overview of the key functions used in the example code:
+
+#### `FCMEmberNotifications(accountEmail, privateKey)`
+This is the constructor that initializes the `FCMEmberNotifications` instance using your Firebase service account credentials.  
+It authenticates your device with Firebase Cloud Messaging, allowing it to send push notifications.
+
+- `accountEmail`: The service account email created in your Firebase project.
+- `privateKey`: The private key string associated with the service account (in PEM format).
+
+#### `notifications.init(userUid)`
+This function initializes the FCM notification service and defines the recipient of the messages.
+
+- `userUid`: The Firebase Authentication User UID of the recipient. This is the unique user identifier from your Firebase project's Authentication section.
+
+> **Note:**  
+> If you are already using other EmberIot functionality (such as the Data Channels),  
+> you should call `notifications.init()` **passing your existing `EmberIot` instance instead of the `userUid`**.  
+> This automatically links the notifications to the already initialized EmberIot instance, decreasing memory usage.
+
+#### `notifications.setAdditionalDeviceInfo(deviceId, titlePrefix)`
+This optional function adds extra information about the device sending notifications.
+
+- `deviceId`: The `DEVICE_ID` registered for this board in EmberIot. This allows the receiving app to know which device sent the notification.
+- `titlePrefix`: A short text added as a prefix to every notification title sent from this device, helping distinguish messages between multiple devices.
+
+#### `notifications.send(title, body)`
+This function sends a Firebase Cloud Messaging notification with a specified title and message body to the user defined in `notifications.init()`.
+
+- `title`: The title of the notification displayed to the user.
+- `body`: The message content shown in the notification.
+
+#### `notifications.loop()`
+This function must be called inside the main `loop()` of your Arduino program.  
+It maintains the connection to the Firebase Cloud Messaging service and processes any pending background tasks required for notifications to work correctly.
+
 ## How it Works - What even is a Data Channel?
     
 In this library, a data channel represents a stream of data received from a specific location in the Firebase Realtime Database.
@@ -211,4 +292,4 @@ To send updates, the library uses the same REST API to perform HTTP requests—m
 
 - [X] Compatibility with ESP8266
 - [ ] Add option for LAN communication, for when there's no network connection
-- [ ] Notification service
+- [X] Notification service
