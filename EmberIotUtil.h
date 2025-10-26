@@ -129,10 +129,10 @@ namespace FirePropUtil {
 
     inline bool isTimeInitialized()
     {
-        if (WiFi.status() != WL_CONNECTED)
-        {
-            return false;
-        }
+        // if (WiFi.status() != WL_CONNECTED)
+        // {
+        //     return false;
+        // }
 
         tm time;
         return getLocalTime(&time);
@@ -193,6 +193,20 @@ namespace FirePropUtil {
         if (*end != '\0')
             return STR2INT_INCONVERTIBLE;
         *out = l;
+        return STR2INT_SUCCESS;
+    }
+
+    inline str2int_errno str2double(double *out, char *s) {
+        char *end;
+        if (s[0] == '\0' || isspace((unsigned char) s[0]))
+            return STR2INT_INCONVERTIBLE;
+        errno = 0;
+        double d = strtod(s, &end);
+        if (errno == ERANGE)
+            return STR2INT_OVERFLOW;
+        if (*end != '\0')
+            return STR2INT_INCONVERTIBLE;
+        *out = d;
         return STR2INT_SUCCESS;
     }
 }

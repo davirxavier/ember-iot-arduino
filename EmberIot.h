@@ -39,6 +39,7 @@
 #include <WithSecureClient.h>
 #include <EmberIotAuth.h>
 #include <EmberIotShared.h>
+#include <EmberIotShared.h>
 #include <EmberIotStream.h>
 #include <time.h>
 
@@ -172,6 +173,8 @@ public:
             return;
         }
 
+        runPendingSchedules();
+
         uint8_t updateCount = 0;
         for (const bool i : hasUpdateByChannel)
         {
@@ -192,6 +195,14 @@ public:
 #endif
             if (result)
             {
+                for (size_t i = 0; i < EMBER_CHANNEL_COUNT; i++)
+                {
+                    if (hasUpdateByChannel[i])
+                    {
+                        snprintf(EmberIotChannels::lastValues[i], EMBER_MAXIMUM_STRING_SIZE, "%s", updateDataByChannel[i]);
+                    }
+                }
+
                 for (bool& i : hasUpdateByChannel)
                 {
                     i = false;
@@ -204,6 +215,16 @@ public:
         }
 
         lastUpdatedChannels = millis();
+    }
+
+    /**
+     * Sets a callback to be executed when a scheduled action runs.
+     * @param scheduleId schedule id.
+     * @param callback function to be executed.
+     */
+    void setScheduleCallback(int scheduleId, EmberIotChannels::ScheduleJobCallback callback)
+    {
+        EmberIotChannels::setScheduleCallback(scheduleId, callback);
     }
 
     /**
@@ -291,6 +312,70 @@ public:
     }
 
 private:
+    void runPendingSchedules()
+    {
+        time_t now = time(nullptr);
+
+        for (size_t i = 0; i < EMBER_MAX_SCHEDULES; i++)
+        {
+            EmberIotChannels::ScheduleJob *job = EmberIotChannels::jobs[i];
+            if (job == nullptr || job->nextExecution < 0 || job->nextExecution > now || job->dataChannel < 0 || job->dataChannel >= EMBER_CHANNEL_COUNT)
+            {
+                continue;
+            }
+
+            switch (tolower(job->mode))
+            {
+                case EmberIotChannels::JOB_MODE_DECREMENT:
+                case EmberIotChannels::JOB_MODE_INCREMENT:
+                    {
+                        double out;
+                        FirePropUtil::str2int_errno ret = FirePropUtil::str2double(&out, job->value);
+                        if (ret != FirePropUtil::STR2INT_SUCCESS)
+                        {
+                            EMBER_DEBUGF("Error parsing job value/str: %d/%s\n", ret, job->value);
+                            break;
+                        }
+
+                        double dataChannelValue;
+                        FirePropUtil::str2int_errno retChannel = FirePropUtil::str2double(&dataChannelValue, EmberIotChannels::lastValues[job->dataChannel]);
+                        if (retChannel == FirePropUtil::STR2INT_INCONVERTIBLE)
+                        {
+                            EMBER_DEBUGN("Current data in channel is inconvertible to a number, setting to schedule value.");
+                            channelWrite(job->dataChannel, out);
+                            break;
+                        }
+                        else if (retChannel != FirePropUtil::STR2INT_SUCCESS)
+                        {
+                            EMBER_DEBUGF("Error parsing data channel value/str: %d/%s\n", ret, EmberIotChannels::lastValues[job->dataChannel]);
+                            break;
+                        }
+
+                        if (job->mode == EmberIotChannels::JOB_MODE_INCREMENT)
+                        {
+                            channelWrite(job->dataChannel, dataChannelValue + out);
+                        }
+                        else
+                        {
+                            channelWrite(job->dataChannel, dataChannelValue - out);
+                        }
+                        break;
+                    }
+            default:
+                {
+                    channelWrite(job->dataChannel, job->value);
+                }
+            }
+
+            EmberIotChannels::updateScheduleNextExecution(job->scheduleId);
+
+            if (EmberIotChannels::jobCallbacks[job->scheduleId] != nullptr)
+            {
+                EmberIotChannels::jobCallbacks[job->scheduleId](job);
+            }
+        }
+    }
+
     bool checkChannelChanged(const char *lastVal, const char *newVal)
     {
         if (lastVal != nullptr && newVal == nullptr)
