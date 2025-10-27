@@ -329,6 +329,7 @@ private:
                 continue;
             }
 
+            char writtenData[EMBER_MAXIMUM_STRING_SIZE]{};
             switch (tolower(job->mode))
             {
                 case EmberIotChannels::JOB_MODE_DECREMENT:
@@ -347,7 +348,8 @@ private:
                         if (retChannel == FirePropUtil::STR2INT_INCONVERTIBLE)
                         {
                             EMBER_DEBUGN("Current data in channel is inconvertible to a number, setting to schedule value.");
-                            channelWrite(job->dataChannel, out);
+                            channelWrite(job->dataChannel, job->value);
+                            snprintf(writtenData, sizeof(writtenData), "%s", job->value);
                             break;
                         }
                         else if (retChannel != FirePropUtil::STR2INT_SUCCESS)
@@ -356,14 +358,9 @@ private:
                             break;
                         }
 
-                        if (job->mode == EmberIotChannels::JOB_MODE_INCREMENT)
-                        {
-                            channelWrite(job->dataChannel, dataChannelValue + out);
-                        }
-                        else
-                        {
-                            channelWrite(job->dataChannel, dataChannelValue - out);
-                        }
+                        double newValue = job->mode == EmberIotChannels::JOB_MODE_INCREMENT ? dataChannelValue + out : dataChannelValue - out;
+                        channelWrite(job->dataChannel, newValue);
+                        snprintf(writtenData, sizeof(writtenData), "%lf", newValue);
                         break;
                     }
             default:
@@ -377,6 +374,11 @@ private:
             if (EmberIotChannels::jobCallbacks[job->scheduleId] != nullptr)
             {
                 EmberIotChannels::jobCallbacks[job->scheduleId](job);
+            }
+
+            if (strlen(writtenData) > 0)
+            {
+                EmberIotChannels::callChannelUpdate(job->dataChannel, writtenData, "sched");
             }
         }
     }
